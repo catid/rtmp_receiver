@@ -321,7 +321,7 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
         break;
     case COMMAND_AMF0:
         {
-            bool has_command = false;
+            std::string command_name;
             int object_nest_level = 0;
             while (stream.RemainingBytes() > 0) {
                 if (object_nest_level > 0) {
@@ -354,8 +354,8 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                     const uint8_t* string_data = stream.ReadData(string_length);
                     std::string value = CreateStringWithTrailingNull(string_data, string_length);
 
-                    if (!has_command) {
-                        has_command = true;
+                    if (command_name.empty()) {
+                        command_name = value;
                         std::cout << "Received AMF0 command: " << value << std::endl;
                     } else {
                         std::cout << "Received AMF0 string: " << value << std::endl;
@@ -382,6 +382,14 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                 } else {
                     std::cout << "Unknown AMF0 type: " << (int)amf0_type << std::endl;
                 }
+            }
+
+            // https://rtmp.veriskope.com/docs/spec/#72-command-messages
+            if (command_name == "connect") {
+                // FIXME: Send Window Ack Size
+                // FIXME: Send Set Peer Bandwidth
+                // FIXME: Send User Control Message (StreamBegin)
+                // FIXME: Send Command Message _result- connect response
             }
         }
         break;
