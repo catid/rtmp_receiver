@@ -95,6 +95,7 @@ public:
     }
 
 private:
+    RollingBuffer Buffer; // Keep left-overs from previous chunks
     uint8_t packetData[2048];
 
     void run(int port) {
@@ -146,6 +147,7 @@ private:
         std::cout << "Client connected" << std::endl;
 
         RTMPHandshake handshake;
+        handshake.Buffer = &Buffer;
         bool sent_s0s1 = false;
         bool sent_s2 = false;
 
@@ -197,6 +199,7 @@ private:
         cout << "Handshake complete" << endl;
 
         RTMPSession parser;
+        parser.Buffer = &Buffer;
 
         while (running) {
             ssize_t bytesRead = recv(clientSocket, packetData, sizeof(packetData), 0);

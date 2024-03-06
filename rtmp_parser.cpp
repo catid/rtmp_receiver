@@ -33,6 +33,37 @@ static void PrintFirst64BytesAsHex(const uint8_t* data, size_t size) {
     std::cout << std::dec << std::endl; // Switch back to decimal for any further output
 }
 
+static std::string CreateStringWithTrailingNull(const uint8_t* data, size_t length) {
+    // Create a string from the given data and length
+    std::string result(reinterpret_cast<const char*>(data), length);
+    
+    // Explicitly append a null character to ensure the string is null-terminated
+    result.push_back('\0');
+    
+    return result;
+}
+
+const char* GetPacketTypeName(int type_id) {
+    switch (type_id) {
+        case CHUNK_SIZE: return "CHUNK_SIZE";
+        case ABORT: return "ABORT";
+        case ACK: return "ACK";
+        case USER_CONTROL: return "USER_CONTROL";
+        case WINDOW_ACK_SIZE: return "WINDOW_ACK_SIZE";
+        case SET_PEER_BANDWIDTH: return "SET_PEER_BANDWIDTH";
+        case AUDIO: return "AUDIO";
+        case VIDEO: return "VIDEO";
+        case DATA_AMF3: return "DATA_AMF3";
+        case SHARED_OBJECT_AMF3: return "SHARED_OBJECT_AMF3";
+        case COMMAND_AMF3: return "COMMAND_AMF3";
+        case DATA_AMF0: return "DATA_AMF0";
+        case SHARED_OBJECT_AMF0: return "SHARED_OBJECT_AMF0";
+        case COMMAND_AMF0: return "COMMAND_AMF0";
+        case AGGREGATE: return "AGGREGATE";
+        default: return "UNKNOWN";
+    }
+}
+
 
 //------------------------------------------------------------------------------
 // RollingBuffer
@@ -78,7 +109,11 @@ void RTMPHandshake::ParseMessage(const void* data, int bytes)
     const uint8_t* buffer = reinterpret_cast<const uint8_t*>(data);
 
     // Continue from previous buffer if available
-    Buffer.Continue(buffer, bytes);
+    Buffer->Continue(buffer, bytes);
+
+    if (State.Round >= 3) {
+        return; // Handshake complete
+    }
 
     ByteStream stream(buffer, bytes);
 
@@ -108,11 +143,16 @@ void RTMPHandshake::ParseMessage(const void* data, int bytes)
         }
 
         if (stream.HasError()) {
-            Buffer.StoreRemaining(stream_start, stream_remaining);
+            Buffer->StoreRemaining(stream_start, stream_remaining);
             return;
         }
 
         State.Round++;
+
+        if (State.Round >= 3) {
+            Buffer->StoreRemaining(stream.PeekData(), stream.RemainingBytes());
+            return;
+        }
     }
 }
 
@@ -125,7 +165,7 @@ void RTMPSession::ParseChunk(const void* data, int bytes)
     const uint8_t* buffer = reinterpret_cast<const uint8_t*>(data);
 
     // Continue from previous buffer if available
-    Buffer.Continue(buffer, bytes);
+    Buffer->Continue(buffer, bytes);
 
     ByteStream stream(buffer, bytes);
 
@@ -195,8 +235,16 @@ void RTMPSession::ParseChunk(const void* data, int bytes)
         // If truncated:
         if (stream.HasError()) {
             std::cout << "Error: truncated message stream.RemainingBytes()=" << stream.RemainingBytes() << ", head.length = " << head.length << std::endl;
-            Buffer.StoreRemaining(stream_start, stream_remaining);
+            Buffer->StoreRemaining(stream_start, stream_remaining);
             return;
+        }
+
+        // Accumulate bytes processed in this chunk
+        ReceivedBytes += stream.RemainingBytes() - stream_remaining;
+        if (ReceivedBytes > WindowAckSize) {
+            MustAck = true;
+            MustAckBytes = ReceivedBytes;
+            ReceivedBytes = 0;
         }
 
         OnMessage(head, message_data, head.length);
@@ -209,10 +257,135 @@ void RTMPSession::ParseChunk(const void* data, int bytes)
         prev_chunk->header = head;
     }
 
-    Buffer.Clear();
+    Buffer->Clear();
 }
+
+enum AMF0Type {
+    NumberMarker = 0x00,
+    BooleanMarker = 0x01,
+    StringMarker = 0x02,
+    ObjectMarker = 0x03,
+    NullMarker = 0x05,
+    UndefinedMarker = 0x06,
+    ReferenceMarker = 0x07,
+    ECMAArrayMarker = 0x08,
+    ObjectEndMarker = 0x09
+    // Add other markers as needed
+};
 
 void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int bytes)
 {
-    std::cout << "Received message with bytes: " << bytes << std::endl;
+    std::cout << "Received message (" << GetPacketTypeName(header.type_id) << ") with bytes: " << bytes << std::endl;
+    PrintFirst64BytesAsHex(data, bytes);
+
+    ByteStream stream(data, bytes);
+
+    switch (header.type_id) {
+    case CHUNK_SIZE:
+        ChunkSize = stream.ReadUInt32();
+        return;
+    case ABORT:
+        {
+            uint32_t cs_id = stream.ReadUInt32();
+            auto iter = chunk_streams.find(cs_id);
+            if (iter != chunk_streams.end()) {
+                chunk_streams.erase(iter);
+            }
+        }
+        return;
+    case ACK:
+        AckSequenceNumber = stream.ReadUInt32();
+        return;
+    case USER_CONTROL:
+        break;
+    case WINDOW_ACK_SIZE:
+        WindowAckSize = stream.ReadUInt32();
+        return;
+    case SET_PEER_BANDWIDTH:
+        MaxUnackedBytes = stream.ReadUInt32();
+        LimitType = stream.ReadUInt8();
+        return;
+    case AUDIO:
+        break;
+    case VIDEO:
+        break;
+    case DATA_AMF3:
+        break;
+    case SHARED_OBJECT_AMF3:
+        break;
+    case COMMAND_AMF3:
+        break;
+    case DATA_AMF0:
+        break;
+    case SHARED_OBJECT_AMF0:
+        break;
+    case COMMAND_AMF0:
+        {
+            bool has_command = false;
+            int object_nest_level = 0;
+            while (stream.RemainingBytes() > 0) {
+                if (object_nest_level > 0) {
+                    uint32_t string_length = stream.ReadUInt16();
+                    if (string_length == 0) {
+                        std::cout << "} null string at end of object" << std::endl;
+                    } else {
+                        const uint8_t* string_data = stream.ReadData(string_length);
+                        std::string value = CreateStringWithTrailingNull(string_data, string_length);
+                        std::cout << "Received AMF0 object string key: " << value << std::endl;
+                    }
+                }
+                uint32_t amf0_type = stream.ReadUInt8();
+                if (amf0_type == ObjectEndMarker) {
+                    --object_nest_level;
+                    if (object_nest_level < 0) {
+                        break;
+                    }
+                }
+                else if (amf0_type == NumberMarker) {
+                    double value = stream.ReadDouble();
+                    std::cout << "Received AMF0 number: " << value << std::endl;
+                }
+                else if (amf0_type == BooleanMarker) {
+                    bool value = stream.ReadUInt8() != 0;
+                    std::cout << "Received AMF0 boolean: " << value << std::endl;
+                }
+                else if (amf0_type == StringMarker) {
+                    uint32_t string_length = stream.ReadUInt16();
+                    const uint8_t* string_data = stream.ReadData(string_length);
+                    std::string value = CreateStringWithTrailingNull(string_data, string_length);
+
+                    if (!has_command) {
+                        has_command = true;
+                        std::cout << "Received AMF0 command: " << value << std::endl;
+                    } else {
+                        std::cout << "Received AMF0 string: " << value << std::endl;
+                    }
+                }
+                else if (amf0_type == NullMarker) {
+                    std::cout << "Received AMF0 null" << std::endl;
+                }
+                else if (amf0_type == UndefinedMarker) {
+                    std::cout << "Received AMF0 undefined" << std::endl;
+                }
+                else if (amf0_type == ReferenceMarker) {
+                    uint32_t reference_id = stream.ReadUInt16();
+                    std::cout << "Received AMF0 reference: " << reference_id << std::endl;
+                }
+                else if (amf0_type == ECMAArrayMarker) {
+                    uint32_t array_length = stream.ReadUInt16();
+                    std::cout << "Received AMF0 array of length: " << array_length << std::endl;
+                    // FIXME: Handle array elements
+                }
+                else if (amf0_type == ObjectMarker) {
+                    std::cout << "Start AMF0 object {" << std::endl;
+                    ++object_nest_level;
+                } else {
+                    std::cout << "Unknown AMF0 type: " << (int)amf0_type << std::endl;
+                }
+            }
+        }
+        break;
+    case AGGREGATE:
+        break;
+    }
 }

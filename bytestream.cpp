@@ -18,8 +18,8 @@ uint8_t ByteStream::ReadUInt8() {
 uint16_t ByteStream::ReadUInt16() {
     uint16_t value = 0;
     if (offset_ + 2 <= size_) {
-        value = (static_cast<uint16_t>(data_[offset_ + 1]) << 8) |
-                (static_cast<uint16_t>(data_[offset_]));
+        value = (static_cast<uint16_t>(data_[offset_]) << 8) |
+                (static_cast<uint16_t>(data_[offset_ + 1]));
         offset_ += 2;
     } else {
         error_ = true;
@@ -30,9 +30,9 @@ uint16_t ByteStream::ReadUInt16() {
 uint32_t ByteStream::ReadUInt24() {
     uint32_t value = 0;
     if (offset_ + 3 <= size_) {
-        value = (static_cast<uint32_t>(data_[offset_ + 2]) << 16) |
+        value = (static_cast<uint32_t>(data_[offset_]) << 16) |
                 (static_cast<uint32_t>(data_[offset_ + 1]) << 8) |
-                (static_cast<uint32_t>(data_[offset_]));
+                (static_cast<uint32_t>(data_[offset_ + 2]));
         offset_ += 3;
     } else {
         error_ = true;
@@ -43,15 +43,38 @@ uint32_t ByteStream::ReadUInt24() {
 uint32_t ByteStream::ReadUInt32() {
     uint32_t value = 0;
     if (offset_ + 4 <= size_) {
-        value = (static_cast<uint32_t>(data_[offset_ + 3]) << 24) |
-                (static_cast<uint32_t>(data_[offset_ + 2]) << 16) |
-                (static_cast<uint32_t>(data_[offset_ + 1]) << 8) |
-                (static_cast<uint32_t>(data_[offset_]));
+        value = (static_cast<uint32_t>(data_[offset_]) << 24) |
+                (static_cast<uint32_t>(data_[offset_ + 1]) << 16) |
+                (static_cast<uint32_t>(data_[offset_ + 2]) << 8) |
+                (static_cast<uint32_t>(data_[offset_ + 3]));
         offset_ += 4;
     } else {
         error_ = true;
     }
     return value;
+}
+
+uint64_t ByteStream::ReadUInt64() {
+    uint64_t value = 0;
+    if (offset_ + 8 <= size_) {
+        value = (static_cast<uint64_t>(data_[offset_]) << 56) |
+                (static_cast<uint64_t>(data_[offset_ + 1]) << 48) |
+                (static_cast<uint64_t>(data_[offset_ + 2]) << 40) |
+                (static_cast<uint64_t>(data_[offset_ + 3]) << 32) |
+                (static_cast<uint64_t>(data_[offset_ + 4]) << 24) |
+                (static_cast<uint64_t>(data_[offset_ + 5]) << 16) |
+                (static_cast<uint64_t>(data_[offset_ + 6]) << 8) |
+                (static_cast<uint64_t>(data_[offset_ + 7]));
+        offset_ += 8;
+    } else {
+        error_ = true;
+    }
+    return value;
+}
+
+double ByteStream::ReadDouble() {
+    uint64_t value = ReadUInt64();
+    return *reinterpret_cast<double*>(&value);
 }
 
 bool ByteStream::HasError() const {

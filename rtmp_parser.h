@@ -20,7 +20,7 @@ protected:
 };
 
 // RTMP packet types
-enum class RTMPPacketType {
+enum RTMPPacketType {
     CHUNK_SIZE = 1,
     ABORT = 2,
     ACK = 3,
@@ -37,6 +37,8 @@ enum class RTMPPacketType {
     COMMAND_AMF0 = 20,
     AGGREGATE = 22
 };
+
+const char* GetPacketTypeName(int type_id);
 
 static const int kRtmpS0ServerVersion = 3;
 
@@ -58,12 +60,11 @@ struct HandshakeState {
 
 class RTMPHandshake {
 public:
+    RollingBuffer* Buffer = nullptr;
+
     void ParseMessage(const void* data, int bytes);
 
     HandshakeState State;
-
-private:
-    RollingBuffer Buffer;
 };
 
 struct RTMPHeader {
@@ -81,14 +82,26 @@ struct RTMPChunk {
 
 class RTMPSession {
 public:
+    RollingBuffer* Buffer = nullptr;
+
     void ParseChunk(const void* data, int bytes);
 
     void OnMessage(const RTMPHeader& header, const uint8_t* data, int bytes);
 
+    uint32_t ChunkSize = 128; // default chunk size
+    uint32_t AckSequenceNumber = 0; // default ack sequence number
+    uint32_t WindowAckSize = 2500000; // default window ack size
+
+    bool MustAck = false;
+    uint32_t MustAckBytes = 0;
+
+    uint32_t MaxUnackedBytes = 0;
+    int LimitType = 0;
+
 private:
     std::unordered_map<uint32_t, std::shared_ptr<RTMPChunk>> chunk_streams; // Active chunk streams
 
-    RollingBuffer Buffer;
+    uint32_t ReceivedBytes = 0;
 };
 
 #endif // RTMPPARSER_H

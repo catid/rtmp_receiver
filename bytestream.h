@@ -13,6 +13,8 @@ public:
     uint16_t ReadUInt16();
     uint32_t ReadUInt24(); // Custom size for RTMP specific format
     uint32_t ReadUInt32();
+    uint64_t ReadUInt64();
+    double ReadDouble();
     const uint8_t* ReadData(int bytes);
 
     bool HasError() const;
