@@ -172,7 +172,7 @@ private:
             }
 
             // If we have C0 but we haven't sent S0 and S1 yet:
-            if (handshake.State.Round >= 1) {
+            if (!sent_s0s1 && handshake.State.Round >= 1) {
                 if (handshake.State.ClientVersion != kRtmpS0ServerVersion) {
                     std::cout << "Invalid version from client" << std::endl;
                     return;
@@ -223,10 +223,8 @@ private:
 
             if (parser.MustSetParams) {
                 parser.MustSetParams = false;
-                if (!sendChannelParams(1310720, 1310720, LIMIT_DYNAMIC)) {
-                    std::cout << "Failed to send channel params" << std::endl;
-                    return;
-                }
+                sendWindowAckSize(2500000);
+                sendChannelParams(2500000, LIMIT_DYNAMIC, 60000);
             }
         }
     }
@@ -236,8 +234,7 @@ private:
     bool sendS0S1() {
         Handshake[0] = kRtmpS0ServerVersion;
         WriteUInt32(Handshake + 1, GetMsec());
-        WriteUInt32(Handshake + 5, 0);
-        FillRandomBuffer(Handshake + 1 + 4 + 4, 1536 - 8, GetMsec());
+        FillRandomBuffer(Handshake + 1 + 4, 1536 - 4, GetMsec());
         ssize_t bytes = send(clientSocket, Handshake, sizeof(Handshake), 0);
         return bytes == sizeof(Handshake);
     }
@@ -246,7 +243,7 @@ private:
 
     bool sendS2(uint32_t peer_time, const void* client_random) {
         WriteUInt32(RandomEcho, peer_time);
-        WriteUInt32(RandomEcho + 4, GetMsec());
+        WriteUInt32(RandomEcho + 4, 0);
         memcpy(RandomEcho + 8, client_random, 1536 - 8);
         ssize_t bytes = send(clientSocket, RandomEcho, sizeof(RandomEcho), 0);
         return bytes == sizeof(RandomEcho);
@@ -267,7 +264,7 @@ private:
         buffer.insert(buffer.end(), data, data + size);
     }
 
-    bool sendChannelParams(uint32_t window_ack_size, uint32_t max_unacked_bytes, int limit_type = LIMIT_HARD) {
+    bool sendWindowAckSize(uint32_t window_ack_size) {
         uint32_t timestamp = 0;
 
         ByteStreamWriter params;
@@ -277,6 +274,15 @@ private:
         params.WriteUInt8(WINDOW_ACK_SIZE);
         params.WriteUInt32(0/*stream_id*/);
             params.WriteUInt32(window_ack_size);
+
+        ssize_t bytes = send(clientSocket, params.GetData(), params.GetLength(), 0);
+        return bytes == params.GetLength();
+    }
+
+    bool sendChannelParams(uint32_t max_unacked_bytes, int limit_type, uint32_t chunk_size) {
+        uint32_t timestamp = 0;
+
+        ByteStreamWriter params;
 
         params.WriteUInt8(2); // cs_id = 2, fmt = 0
         params.WriteUInt24(timestamp);
@@ -288,15 +294,21 @@ private:
 
         params.WriteUInt8(2); // cs_id = 2, fmt = 0
         params.WriteUInt24(timestamp);
+        params.WriteUInt24(4/*length*/);
+        params.WriteUInt8(CHUNK_SIZE);
+        params.WriteUInt32(0/*stream_id*/);
+            params.WriteUInt32(chunk_size);
+#if 0
+        params.WriteUInt8(2); // cs_id = 2, fmt = 0
+        params.WriteUInt24(timestamp);
         params.WriteUInt24(6/*length*/);
         params.WriteUInt8(USER_CONTROL);
         params.WriteUInt32(0/*stream_id*/);
             params.WriteUInt16(EVENT_STREAM_BEGIN);
             params.WriteUInt32(0);
-
-        cout << "Set channel params: window_ack_size=" << window_ack_size << ", max_unacked_bytes=" << max_unacked_bytes << ", limit_type=" << (int)limit_type << endl;
-
+#endif
         ssize_t bytes = send(clientSocket, params.GetData(), params.GetLength(), 0);
+        cout << "SEND sendChannelParams" << endl;
         return bytes == params.GetLength();
     }
 
