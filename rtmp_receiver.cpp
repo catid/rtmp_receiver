@@ -9,6 +9,7 @@
 #include <functional>
 
 #include "rtmp_parser.h"
+#include "bytestream_writer.h"
 
 #include <iostream>
 using namespace std;
@@ -51,6 +52,12 @@ public:
     }
 private:
     std::function<void()> f;
+};
+
+enum LimitType {
+    LIMIT_HARD = 0,
+    LIMIT_SOFT = 1,
+    LIMIT_DYNAMIC = 2
 };
 
 
@@ -213,6 +220,14 @@ private:
                 std::cout << "Failed to receive data from client" << std::endl;
                 break;
             }
+
+            if (parser.MustSetParams) {
+                parser.MustSetParams = false;
+                if (!sendChannelParams(1310720, 1310720, LIMIT_DYNAMIC)) {
+                    std::cout << "Failed to send channel params" << std::endl;
+                    return;
+                }
+            }
         }
     }
 
@@ -250,6 +265,79 @@ private:
         // You can refer to the RTMP specification for the packet structure and parsing rules
         // This is a simplified example, assuming the video data is contained in the payload of the RTMP packet
         buffer.insert(buffer.end(), data, data + size);
+    }
+
+    bool sendChannelParams(uint32_t window_ack_size, uint32_t max_unacked_bytes, int limit_type = LIMIT_HARD) {
+        uint32_t timestamp = 0;
+
+        ByteStreamWriter params;
+        params.WriteUInt8(2); // cs_id = 2, fmt = 0
+        params.WriteUInt24(timestamp);
+        params.WriteUInt24(4/*length*/);
+        params.WriteUInt8(WINDOW_ACK_SIZE);
+        params.WriteUInt32(0/*stream_id*/);
+            params.WriteUInt32(window_ack_size);
+
+        params.WriteUInt8(2); // cs_id = 2, fmt = 0
+        params.WriteUInt24(timestamp);
+        params.WriteUInt24(5/*length*/);
+        params.WriteUInt8(SET_PEER_BANDWIDTH);
+        params.WriteUInt32(0/*stream_id*/);
+            params.WriteUInt32(max_unacked_bytes);
+            params.WriteUInt8(limit_type);
+
+        params.WriteUInt8(2); // cs_id = 2, fmt = 0
+        params.WriteUInt24(timestamp);
+        params.WriteUInt24(6/*length*/);
+        params.WriteUInt8(USER_CONTROL);
+        params.WriteUInt32(0/*stream_id*/);
+            params.WriteUInt16(EVENT_STREAM_BEGIN);
+            params.WriteUInt32(0);
+
+        cout << "Set channel params: window_ack_size=" << window_ack_size << ", max_unacked_bytes=" << max_unacked_bytes << ", limit_type=" << (int)limit_type << endl;
+
+        ssize_t bytes = send(clientSocket, params.GetData(), params.GetLength(), 0);
+        return bytes == params.GetLength();
+    }
+
+    bool sendConnectResult() {
+        uint32_t timestamp = 0;
+
+        ByteStreamWriter msg;
+
+        ByteStreamWriter amf;
+        amf.WriteUInt8(StringMarker);
+        amf.WriteAmf0String("_result");
+        amf.WriteUInt8(NumberMarker);
+        amf.WriteDouble(1.0);
+        amf.WriteUInt8(NullMarker);
+        amf.WriteUInt8(ObjectMarker);
+            amf.WriteAmf0String("level");
+            amf.WriteUInt8(StringMarker);
+            amf.WriteAmf0String("status");
+
+            amf.WriteAmf0String("code");
+            amf.WriteUInt8(StringMarker);
+            amf.WriteAmf0String("NetConnection.Connect.Success");
+
+            amf.WriteAmf0String("description");
+            amf.WriteUInt8(StringMarker);
+            amf.WriteAmf0String("Connection succeeded.");
+
+            amf.WriteUInt16(0);
+        amf.WriteUInt8(ObjectEndMarker);
+
+        msg.WriteUInt8(3); // cs_id = 3, fmt = 0
+        msg.WriteUInt24(timestamp);
+        msg.WriteUInt24(amf.GetLength()/*length*/);
+        msg.WriteUInt8(COMMAND_AMF0);
+        msg.WriteUInt32(0/*stream_id*/);
+            msg.WriteData(amf.GetData(), amf.GetLength());
+
+        cout << "Sent connect response" << endl;
+
+        ssize_t bytes = send(clientSocket, msg.GetData(), msg.GetLength(), 0);
+        return bytes == msg.GetLength();
     }
 };
 

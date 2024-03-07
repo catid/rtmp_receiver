@@ -9,4 +9,5 @@ add_executable(rtmp_receiver
     rtmp_receiver.cpp
     rtmp_parser.cpp
     bytestream.cpp
+    bytestream_writer.cpp
 )

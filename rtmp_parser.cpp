@@ -6,7 +6,7 @@
 #include <iomanip>
 #include <cstring>
 #include <chrono>
-
+using namespace std;
 
 //------------------------------------------------------------------------------
 // Tools
@@ -33,13 +33,11 @@ static void PrintFirst64BytesAsHex(const uint8_t* data, size_t size) {
     std::cout << std::dec << std::endl; // Switch back to decimal for any further output
 }
 
-static std::string CreateStringWithTrailingNull(const uint8_t* data, size_t length) {
-    // Create a string from the given data and length
+static std::string CreateStringFromBytes(const uint8_t* data, size_t length) {
+    // Create a string from the given data and length.
+    // The std::string constructor will copy 'length' characters and
+    // automatically handle null-termination for C-string access.
     std::string result(reinterpret_cast<const char*>(data), length);
-    
-    // Explicitly append a null character to ensure the string is null-terminated
-    result.push_back('\0');
-    
     return result;
 }
 
@@ -62,6 +60,27 @@ const char* GetPacketTypeName(int type_id) {
         case AGGREGATE: return "AGGREGATE";
         default: return "UNKNOWN";
     }
+}
+
+static void WriteUInt32(uint8_t* buffer, uint32_t value) {
+    buffer[0] = static_cast<uint8_t>(value >> 24);
+    buffer[1] = static_cast<uint8_t>(value >> 16);
+    buffer[2] = static_cast<uint8_t>(value >> 8);
+    buffer[3] = static_cast<uint8_t>(value);
+}
+
+static void WriteUInt24(uint8_t* buffer, uint32_t value) {
+    buffer[0] = static_cast<uint8_t>(value >> 16);
+    buffer[1] = static_cast<uint8_t>(value >> 8);
+    buffer[2] = static_cast<uint8_t>(value);
+}
+
+static uint64_t GetMsec() {
+    using namespace std::chrono;
+    milliseconds ms = duration_cast<milliseconds>(
+        system_clock::now().time_since_epoch()
+    );
+    return ms.count();
 }
 
 
@@ -260,19 +279,6 @@ void RTMPSession::ParseChunk(const void* data, int bytes)
     Buffer->Clear();
 }
 
-enum AMF0Type {
-    NumberMarker = 0x00,
-    BooleanMarker = 0x01,
-    StringMarker = 0x02,
-    ObjectMarker = 0x03,
-    NullMarker = 0x05,
-    UndefinedMarker = 0x06,
-    ReferenceMarker = 0x07,
-    ECMAArrayMarker = 0x08,
-    ObjectEndMarker = 0x09
-    // Add other markers as needed
-};
-
 void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int bytes)
 {
     std::cout << "Received message (" << GetPacketTypeName(header.type_id) << ") with bytes: " << bytes << std::endl;
@@ -330,7 +336,7 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                         std::cout << "} null string at end of object" << std::endl;
                     } else {
                         const uint8_t* string_data = stream.ReadData(string_length);
-                        std::string value = CreateStringWithTrailingNull(string_data, string_length);
+                        std::string value = CreateStringFromBytes(string_data, string_length);
                         std::cout << "Received AMF0 object string key: " << value << std::endl;
                     }
                 }
@@ -352,7 +358,7 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                 else if (amf0_type == StringMarker) {
                     uint32_t string_length = stream.ReadUInt16();
                     const uint8_t* string_data = stream.ReadData(string_length);
-                    std::string value = CreateStringWithTrailingNull(string_data, string_length);
+                    std::string value = CreateStringFromBytes(string_data, string_length);
 
                     if (command_name.empty()) {
                         command_name = value;
@@ -384,12 +390,17 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                 }
             }
 
+            cout << " command_name='" << command_name << "'" << endl;
+
             // https://rtmp.veriskope.com/docs/spec/#72-command-messages
             if (command_name == "connect") {
-                // FIXME: Send Window Ack Size
-                // FIXME: Send Set Peer Bandwidth
+                cout << "MustSetParams=true" << endl;
+                MustSetParams = true;
+
                 // FIXME: Send User Control Message (StreamBegin)
                 // FIXME: Send Command Message _result- connect response
+            } else {
+                cout << "MustSetParams=false" << endl;
             }
         }
         break;

@@ -8,16 +8,9 @@
 #include <memory>
 #include <unordered_map>
 
-class RollingBuffer {
-public:
-    void Continue(const uint8_t* &data, int &bytes);
-    void StoreRemaining(const uint8_t* data, int bytes);
-    void Clear();
 
-protected:
-    std::vector<uint8_t> Buffers[2];
-    int BufferIndex = 0;
-};
+//------------------------------------------------------------------------------
+// Definitions
 
 // RTMP packet types
 enum RTMPPacketType {
@@ -38,9 +31,53 @@ enum RTMPPacketType {
     AGGREGATE = 22
 };
 
-const char* GetPacketTypeName(int type_id);
+enum AMF0Type {
+    NumberMarker = 0x00,
+    BooleanMarker = 0x01,
+    StringMarker = 0x02,
+    ObjectMarker = 0x03,
+    NullMarker = 0x05,
+    UndefinedMarker = 0x06,
+    ReferenceMarker = 0x07,
+    ECMAArrayMarker = 0x08,
+    ObjectEndMarker = 0x09
+    // Add other markers as needed
+};
+
+enum EventType {
+    EVENT_STREAM_BEGIN = 0,
+    EVENT_STREAM_EOF = 1,
+    EVENT_STREAM_DRY = 2,
+    EVENT_STREAM_ERROR = 3,
+    EVENT_ABORT = 4,
+    EVENT_SET_BUFFER_LENGTH = 5,
+    EVENT_USER_CONTROL = 6,
+    EVENT_PING = 7,
+    EVENT_PONG = 8,
+};
 
 static const int kRtmpS0ServerVersion = 3;
+
+
+//------------------------------------------------------------------------------
+// Tools
+
+const char* GetPacketTypeName(int type_id);
+
+class RollingBuffer {
+public:
+    void Continue(const uint8_t* &data, int &bytes);
+    void StoreRemaining(const uint8_t* data, int bytes);
+    void Clear();
+
+protected:
+    std::vector<uint8_t> Buffers[2];
+    int BufferIndex = 0;
+};
+
+
+//------------------------------------------------------------------------------
+// Parser Helpers
 
 struct HandshakeState {
     int Round = 0;
@@ -97,6 +134,8 @@ public:
 
     uint32_t MaxUnackedBytes = 0;
     int LimitType = 0;
+
+    bool MustSetParams = false;
 
 private:
     std::unordered_map<uint32_t, std::shared_ptr<RTMPChunk>> chunk_streams; // Active chunk streams
