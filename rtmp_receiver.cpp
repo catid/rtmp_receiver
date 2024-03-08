@@ -160,7 +160,7 @@ private:
 
         while (running) {
             ssize_t bytesRead = recv(clientSocket, packetData, sizeof(packetData), 0);
-            std::cout << "Handshake: Received " << bytesRead << " bytes of data from client" << std::endl;
+            //std::cout << "Handshake: Received " << bytesRead << " bytes of data from client" << std::endl;
             if (bytesRead > 0) {
                 handshake.ParseMessage(packetData, bytesRead);
             } else if (bytesRead == 0) {
@@ -208,23 +208,38 @@ private:
         RTMPSession parser;
         parser.Buffer = &Buffer;
 
+        const uint8_t* parse_data = nullptr;
+        ssize_t bytesRead = 0;
+
         while (running) {
-            ssize_t bytesRead = recv(clientSocket, packetData, sizeof(packetData), 0);
-            std::cout << "Session: Received " << bytesRead << " bytes of data from client" << std::endl;
-            if (bytesRead > 0) {
-                parser.ParseChunk(packetData, bytesRead);
-            } else if (bytesRead == 0) {
-                std::cout << "Client disconnected" << std::endl;
-                break;
-            } else {
-                std::cout << "Failed to receive data from client" << std::endl;
-                break;
+            // We parse first because there may be some data left over from the handshake
+            while (parser.ParseChunk(parse_data, bytesRead))
+            {
+                // Pass null next time to continue parsing the same buffer
+                parse_data = nullptr;
+                bytesRead = 0;
+
+                if (parser.MustSetParams) {
+                    parser.MustSetParams = false;
+                    sendWindowAckSize(2500000);
+                    sendChannelParams(2500000, LIMIT_DYNAMIC, 60000);
+                    sendConnectResult();
+                }
+                else if (parser.NeedsNullResponse) {
+                    parser.NeedsNullResponse = false;
+                    sendNullResponse(parser.NullResponseNumber);
+                }
             }
 
-            if (parser.MustSetParams) {
-                parser.MustSetParams = false;
-                sendWindowAckSize(2500000);
-                sendChannelParams(2500000, LIMIT_DYNAMIC, 60000);
+            parse_data = packetData;
+            bytesRead = recv(clientSocket, packetData, sizeof(packetData), 0);
+            //std::cout << "Session: Received " << bytesRead << " bytes of data from client" << std::endl;
+            if (bytesRead == 0) {
+                std::cout << "Client disconnected" << std::endl;
+                break;
+            } else if (bytesRead < 0) {
+                std::cout << "Failed to receive data from client" << std::endl;
+                break;
             }
         }
     }
@@ -347,6 +362,32 @@ private:
             msg.WriteData(amf.GetData(), amf.GetLength());
 
         cout << "Sent connect response" << endl;
+
+        ssize_t bytes = send(clientSocket, msg.GetData(), msg.GetLength(), 0);
+        return bytes == msg.GetLength();
+    }
+
+    bool sendNullResponse(double command_number) {
+        uint32_t timestamp = 0;
+
+        ByteStreamWriter msg;
+
+        ByteStreamWriter amf;
+        amf.WriteUInt8(StringMarker);
+        amf.WriteAmf0String("_result");
+        amf.WriteUInt8(NumberMarker);
+        amf.WriteDouble(command_number);
+        amf.WriteUInt8(NullMarker);
+        amf.WriteUInt8(UndefinedMarker);
+
+        msg.WriteUInt8(3); // cs_id = 3, fmt = 0
+        msg.WriteUInt24(timestamp);
+        msg.WriteUInt24(amf.GetLength()/*length*/);
+        msg.WriteUInt8(COMMAND_AMF0);
+        msg.WriteUInt32(0/*stream_id*/);
+            msg.WriteData(amf.GetData(), amf.GetLength());
+
+        cout << "Sent null response" << endl;
 
         ssize_t bytes = send(clientSocket, msg.GetData(), msg.GetLength(), 0);
         return bytes == msg.GetLength();

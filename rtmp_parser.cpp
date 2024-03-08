@@ -91,9 +91,13 @@ void RollingBuffer::Continue(const uint8_t* &data, int &bytes)
 {
     std::vector<uint8_t>& prev_buffer = Buffers[BufferIndex];
 
+    cout << "RollingBuffer: Continue: BufferIndex=" << BufferIndex << ", bytes=" << bytes << " prev_buffer.size=" << prev_buffer.size() << endl;
+
     // Continue from previous buffer if available
     if (prev_buffer.size() > 0) {
-        AppendDataToVector(prev_buffer, data, bytes);
+        if (bytes > 0) {
+            AppendDataToVector(prev_buffer, data, bytes);
+        }
         data = prev_buffer.data();
         bytes = prev_buffer.size();
     }
@@ -101,15 +105,14 @@ void RollingBuffer::Continue(const uint8_t* &data, int &bytes)
 
 void RollingBuffer::StoreRemaining(const uint8_t* data, int bytes)
 {
-    ++BufferIndex;
-    if (BufferIndex >= 2) {
-        BufferIndex = 0;
-    }
+    BufferIndex ^= 1;
 
     std::vector<uint8_t>& next_buffer = Buffers[BufferIndex];
 
     next_buffer.clear();
     AppendDataToVector(next_buffer, data, bytes);
+
+    cout << "RollingBuffer: StoreRemaining: BufferIndex=" << BufferIndex << ", bytes=" << bytes << " next_buffer.size=" << next_buffer.size() << endl;
 }
 
 void RollingBuffer::Clear()
@@ -179,7 +182,7 @@ void RTMPHandshake::ParseMessage(const void* data, int bytes)
 //------------------------------------------------------------------------------
 // RTMPSession
 
-void RTMPSession::ParseChunk(const void* data, int bytes)
+bool RTMPSession::ParseChunk(const void* data, int bytes)
 {
     const uint8_t* buffer = reinterpret_cast<const uint8_t*>(data);
 
@@ -190,6 +193,8 @@ void RTMPSession::ParseChunk(const void* data, int bytes)
 
     std::cout << "Received chunk bytes: " << bytes << std::endl;
     PrintFirst64BytesAsHex(buffer, bytes);
+
+    bool has_message = false;
 
     while (!stream.IsEndOfStream()) {
         // Store the start of this stream message so if it is truncated we can store it
@@ -255,7 +260,7 @@ void RTMPSession::ParseChunk(const void* data, int bytes)
         if (stream.HasError()) {
             std::cout << "Error: truncated message stream.RemainingBytes()=" << stream.RemainingBytes() << ", head.length = " << head.length << std::endl;
             Buffer->StoreRemaining(stream_start, stream_remaining);
-            return;
+            return false;
         }
 
         // Accumulate bytes processed in this chunk
@@ -267,6 +272,7 @@ void RTMPSession::ParseChunk(const void* data, int bytes)
         }
 
         OnMessage(head, message_data, head.length);
+        has_message = true;
 
         // Completed a message, so store the state for next time
         if (!prev_chunk) {
@@ -274,9 +280,16 @@ void RTMPSession::ParseChunk(const void* data, int bytes)
             chunk_streams[head.cs_id] = prev_chunk;
         }
         prev_chunk->header = head;
+
+        // Allow outer loop to process each message
+        if (!stream.IsEndOfStream()) {
+            Buffer->StoreRemaining(stream.PeekData(), stream.RemainingBytes());
+            return true;
+        }
     }
 
     Buffer->Clear();
+    return has_message;
 }
 
 void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int bytes)
@@ -329,6 +342,8 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
         {
             std::string command_name;
             int object_nest_level = 0;
+            double command_number = 0;
+            bool has_command_number = false;
             while (stream.RemainingBytes() > 0) {
                 if (object_nest_level > 0) {
                     uint32_t string_length = stream.ReadUInt16();
@@ -350,6 +365,10 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                 else if (amf0_type == NumberMarker) {
                     double value = stream.ReadDouble();
                     std::cout << "Received AMF0 number: " << value << std::endl;
+                    if (!has_command_number) {
+                        command_number = value;
+                        has_command_number = true;
+                    }
                 }
                 else if (amf0_type == BooleanMarker) {
                     bool value = stream.ReadUInt8() != 0;
@@ -396,11 +415,9 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
             if (command_name == "connect") {
                 cout << "MustSetParams=true" << endl;
                 MustSetParams = true;
-
-                // FIXME: Send User Control Message (StreamBegin)
-                // FIXME: Send Command Message _result- connect response
             } else {
-                cout << "MustSetParams=false" << endl;
+                NeedsNullResponse = true;
+                NullResponseNumber = command_number;
             }
         }
         break;

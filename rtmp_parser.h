@@ -121,7 +121,7 @@ class RTMPSession {
 public:
     RollingBuffer* Buffer = nullptr;
 
-    void ParseChunk(const void* data, int bytes);
+    bool ParseChunk(const void* data, int bytes);
 
     void OnMessage(const RTMPHeader& header, const uint8_t* data, int bytes);
 
@@ -136,6 +136,9 @@ public:
     int LimitType = 0;
 
     bool MustSetParams = false;
+
+    bool NeedsNullResponse = false;
+    double NullResponseNumber = 0.0;
 
 private:
     std::unordered_map<uint32_t, std::shared_ptr<RTMPChunk>> chunk_streams; // Active chunk streams
