@@ -156,7 +156,7 @@ public:
     // Server should send a COMMAND_AMF0 acknowledgement
     virtual void OnMessage(const std::string& name, double number) = 0;
 
-    virtual void OnVideo(uint32_t stream, uint32_t timestamp, const uint8_t* data, int bytes) = 0;
+    virtual void OnAvccVideo(bool keyframe, uint32_t stream, uint32_t timestamp, const uint8_t* data, int bytes) = 0;
 };
 
 class RTMPSession {

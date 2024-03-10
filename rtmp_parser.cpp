@@ -364,49 +364,9 @@ void RTMPSession::OnMessage(const RTMPHeader& head, const uint8_t* data, int byt
                 cout << "Received unknown video frame type=" << frame_type << endl;
                 return;
             }
-            const bool key_frame = (frame_type == VIDEO_FRAME_TYPE_KEY);
+            const bool keyframe = (frame_type == VIDEO_FRAME_TYPE_KEY);
 
-            const uint8_t packet_type = stream.ReadUInt8();
-            const uint32_t composition_time_offset = stream.ReadUInt24();
-            const uint32_t dts = head.timestamp;
-            const uint32_t pts = dts + composition_time_offset;
-
-            if (stream.HasError()) {
-                cout << "Error: truncated video packet" << endl;
-                return;
-            }
-
-            if (packet_type == AVC_SEQUENCE_HEADER) {
-                stream.ReadData(5); // skip AVC header
-                const int num_sps = stream.ReadUInt8() & 0x1f;
-                for (int i = 0; i < num_sps; ++i) {
-                    const uint16_t sps_length = stream.ReadUInt16();
-                    const uint8_t* sps_data = stream.ReadData(sps_length);
-                    cout << "Received SPS len=" << sps_length << endl;
-                    //Handler->OnVideo(head.stream_id, head.timestamp, data, bytes);
-                }
-
-                const int num_pps = stream.ReadUInt8();
-                for (int i = 0; i < num_pps; ++i) {
-                    const uint16_t pps_length = stream.ReadUInt16();
-                    const uint8_t* pps_data = stream.ReadData(pps_length);
-                    cout << "Received PPS len=" << pps_length << endl;
-                    //Handler->OnVideo(head.stream_id, head.timestamp, data, bytes);
-                }
-            } else if (packet_type == AVC_NALU) {
-                while (!stream.IsEndOfStream()) {
-                    const uint32_t nalu_length = stream.ReadUInt32();
-                    const uint8_t* nalu_data = stream.ReadData(nalu_length);
-                    cout << "Received NALU len=" << nalu_length << " key_frame=" << key_frame << endl;
-                    //Handler->OnVideo(head.stream_id, head.timestamp, data, bytes);
-                }
-            } else {
-                cout << "Received unknown video packet type=" << packet_type << endl;
-                return;
-            }
-            if (stream.HasError()) {
-                cout << "Error: truncated video packet" << endl;
-            }
+            Handler->OnAvccVideo(keyframe, head.stream_id, head.timestamp, data + 1, bytes - 1);
         }
         break;
     case DATA_AMF3:

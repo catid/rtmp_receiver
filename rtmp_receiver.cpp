@@ -417,9 +417,9 @@ private:
         return bytes == msg.GetLength();
     }
 
-    void OnVideo(uint32_t stream, uint32_t timestamp, const uint8_t* data, int bytes) override {
-        cout << "Received video data on stream=" << stream << " ts=" << timestamp << " bytes=" << bytes << endl;
-        PrintFirst64BytesAsHex(data, bytes);
+    void OnAvccVideo(bool keyframe, uint32_t stream, uint32_t timestamp, const uint8_t* data, int bytes) override {
+        cout << "Received video keyframe=" << keyframe << " data on stream=" << stream << " ts=" << timestamp << " bytes=" << bytes << endl;
+        //PrintFirst64BytesAsHex(data, bytes);
     }
 };
 
