@@ -6,7 +6,7 @@
 #include <fcntl.h>
 
 #include "rtmp_parser.h"
-#include "bytestream_writer.h"
+#include "bytestream.h"
 #include "rtmp_tools.h"
 
 #include <iostream>

@@ -14,8 +14,6 @@ add_library(rtmp_tools
     rtmp_parser.h
     bytestream.cpp
     bytestream.h
-    bytestream_writer.cpp
-    bytestream_writer.h
 )
 
 add_executable(rtmp_receiver_test
