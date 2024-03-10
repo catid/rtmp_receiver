@@ -101,9 +101,9 @@ void RTMPHandshake::ParseMessage(const void* data, int bytes)
     ByteStream stream(buffer, bytes);
 
     while (!stream.IsEndOfStream()) {
-        // Store the start of this stream message so if it is truncated we can store it
-        const uint8_t* stream_start = stream.PeekData();
-        int stream_remaining = stream.RemainingBytes();
+        // Store the start of this message in case it is truncated
+        const uint8_t* start_data = stream.PeekData();
+        int start_remaining = stream.RemainingBytes();
 
         if (State.Round == 0) {
             State.ClientVersion = stream.ReadUInt8();
@@ -126,7 +126,7 @@ void RTMPHandshake::ParseMessage(const void* data, int bytes)
         }
 
         if (stream.HasError()) {
-            Buffer->StoreRemaining(stream_start, stream_remaining);
+            Buffer->StoreRemaining(start_data, start_remaining);
             return;
         }
 
@@ -156,9 +156,9 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
     //LOG(PrintFirst64BytesAsHex(buffer, bytes);)
 
     while (!stream.IsEndOfStream()) {
-        // Store the start of this stream message so if it is truncated we can store it
-        const uint8_t* stream_start = stream.PeekData();
-        int stream_remaining = stream.RemainingBytes();
+        // Store the start of this chunk in case it is truncated
+        const uint8_t* start_data = stream.PeekData();
+        int start_remaining = stream.RemainingBytes();
 
         RTMPHeader head;
 
@@ -217,6 +217,7 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
 
         // If message fits in a single chunk, then attempt to read it directly.
         int expected_bytes = head.length;
+        assert(ChunkSize > 0);
         if (expected_bytes > ChunkSize) {
             if (prev_chunk) {
                 expected_bytes -= static_cast<int>( prev_chunk->AccumulatedData.size() );
@@ -231,12 +232,12 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
         if (stream.HasError()) {
             //LOG(std::cout << "Received chunk partial (waiting for more) on cs=" << head.cs_id << std::endl;)
             // Have not finished receiving the current chunk so save until more data arrives.
-            Buffer->StoreRemaining(stream_start, stream_remaining);
+            Buffer->StoreRemaining(start_data, start_remaining);
             return false;
         }
 
         // Accumulate bytes processed in this chunk
-        int processed_bytes = stream_remaining - stream.RemainingBytes();
+        int processed_bytes = start_remaining - stream.RemainingBytes();
         assert(processed_bytes >= 0);
         ReceivedBytes += processed_bytes;
         if (ReceivedBytes > WindowAckSize) {

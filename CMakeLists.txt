@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
 project(rtmp_receiver)
 
-# Set the C++ standard
+# Set the default build type if not specified
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build." FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 

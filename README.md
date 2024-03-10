@@ -24,7 +24,7 @@ In another window run:
 gst-launch-1.0 videotestsrc ! video/x-raw,width=640,height=480 ! x264enc ! flvmux ! rtmpsink location='rtmp://localhost/live/stream'
 ```
 
-This will exercise the RTMP server to make sure it is working.
+This will exercise the RTMP server to make sure it is working.  You can add `x264enc bitrate=5000` to the Gstreamer pipeline to increase the bitrate.
 
 ## Example Output
 
