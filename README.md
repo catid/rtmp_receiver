@@ -26,8 +26,34 @@ This will exercise the RTMP server to make sure it is working.
 
 ## Example Output
 
-```
+The following is an example of restarting the Gstreamer pipeline above.  You can see the RTMP server accepts the new connection and resumes receiving the new stream, gracefully handling the disconnection of the previous stream.  Pressing Enter will stop the server.
 
+```
+(base) ➜  build git:(main) ✗ ./rtmp_receiver_test
+Press Enter to stop the server...
+*** New stream 4
+Received video keyframe=1 data on stream=4 ts=0 bytes=51
+Received video keyframe=1 data on stream=4 ts=0 bytes=14589
+Received video keyframe=0 data on stream=4 ts=0 bytes=10676
+Received video keyframe=0 data on stream=4 ts=0 bytes=8785
+Received video keyframe=0 data on stream=4 ts=33 bytes=8520
+Received video keyframe=0 data on stream=4 ts=66 bytes=8354
+Received video keyframe=0 data on stream=4 ts=100 bytes=10287
+Received video keyframe=0 data on stream=4 ts=133 bytes=8657
+Received video keyframe=0 data on stream=4 ts=166 bytes=8408
+Received video keyframe=0 data on stream=4 ts=200 bytes=8610
+*** New stream 4
+Received video keyframe=1 data on stream=4 ts=0 bytes=51
+Received video keyframe=1 data on stream=4 ts=0 bytes=14589
+Received video keyframe=0 data on stream=4 ts=0 bytes=10676
+Received video keyframe=0 data on stream=4 ts=0 bytes=8785
+Received video keyframe=0 data on stream=4 ts=33 bytes=8520
+Received video keyframe=0 data on stream=4 ts=66 bytes=8470
+Received video keyframe=0 data on stream=4 ts=100 bytes=10293
+Received video keyframe=0 data on stream=4 ts=133 bytes=8643
+Received video keyframe=0 data on stream=4 ts=166 bytes=8499
+Received video keyframe=0 data on stream=4 ts=200 bytes=8648
+Received video keyframe=0 data on stream=4 ts=233 bytes=10566
 ```
 
 ## Using

@@ -3,6 +3,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "rtmp_parser.h"
 #include "bytestream_writer.h"
@@ -14,31 +15,51 @@ using namespace std;
 
 
 //------------------------------------------------------------------------------
+// Tools
+
+static void SetNonBlocking(int s) {
+    int flags = fcntl(s, F_GETFL, 0);
+    if (flags < 0) {
+        perror("fcntl failed");
+        return;
+    }
+    flags |= O_NONBLOCK;
+    if (fcntl(s, F_SETFL, flags) < 0) {
+        perror("fcntl failed");
+        return;
+    }
+}
+
+
+//------------------------------------------------------------------------------
 // RTMPServer
 
-void RTMPServer::Start(RTMPCallback callback, int port, bool enable_logging) {
+bool RTMPServer::Start(RTMPCallback callback, int port, bool enable_logging) {
     Callback = callback;
     Port = port;
     EnableLogging = enable_logging;
 
-    ServerSocket = -1;
-    ClientSocket = -1;
+    // Allocate receive buffer on heap
+    RecvBuffer.resize(2048 * 16);
+
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, ControlSock) < 0) {
+        perror("socketpair failed");
+        return false;
+    }
+    SetNonBlocking(ControlSock[1]); // Set write end non-blocking
 
     Terminated = false;
     Thread = std::make_shared<std::thread>(&RTMPServer::Loop, this);
+
+    return true;
 }
 
 void RTMPServer::Stop() {
     Terminated = true;
 
-    // Close the sockets if they are open, forcing the thread to exit
-    if (ClientSocket != -1) {
-        close(ClientSocket);
-        ClientSocket = -1;
-    }
-    if (ServerSocket != -1) {
-        close(ServerSocket);
-        ServerSocket = -1;
+    char stop = 's';
+    if (write(ControlSock[1], &stop, sizeof(stop)) < 0) {
+        perror("write failed");
     }
 
     // Wait for the thread to exit
@@ -46,6 +67,9 @@ void RTMPServer::Stop() {
         Thread->join();
     }
     Thread = nullptr;
+
+    close(ControlSock[0]);
+    close(ControlSock[1]);
 }
 
 void RTMPServer::Loop() {
@@ -60,21 +84,18 @@ void RTMPServer::Loop() {
 
 void RTMPServer::RunServer() {
     int s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s == -1) {
-        cout << "Failed to create server socket" << endl;
+    if (s < 0) {
+        perror("socket failed");
         return;
     }
-    ServerSocket = s;
 
     AutoClose serverSocketCloser([&]() {
-        close(ServerSocket.load());
-        ServerSocket = -1;
+        close(s);
     });
 
     int optval = 1;
-    int r = setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-    if (r == -1) {
-        cout << "Failed to set SO_REUSEADDR on server socket" << endl;
+    if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+        perror("setsockopt failed");
         return;
     }
 
@@ -83,15 +104,13 @@ void RTMPServer::RunServer() {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(Port);
 
-    r = bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-    if (r == -1) {
-        cout << "Failed to bind server socket" << endl;
+    if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        perror("bind failed");
         return;
     }
 
-    r = listen(s, 1);
-    if (r == -1) {
-        cout << "Failed to listen on server socket" << endl;
+    if (listen(s, 1) < 0) {
+        perror("listen failed");
         return;
     }
 
@@ -100,27 +119,61 @@ void RTMPServer::RunServer() {
     }
 
     while (!Terminated) {
-        HandleClients();
+        // Reset for each new connection
+        seen_streams.clear();
+
+        if (WaitForConnection(s)) {
+            HandleNextClient(s);
+        }
     }
 }
 
-void RTMPServer::HandleClients() {
-    RollingBuffer Buffer; // Keep left-overs from previous chunks
+bool RTMPServer::WaitForConnection(int server_socket) {
+    fd_set readfds;
+    const int maxfd = max(server_socket, ControlSock[0]);
 
-    ClientSocket = accept(ServerSocket, nullptr, nullptr);
-    if (ClientSocket == -1) {
-        cout << "Failed to accept client connection" << endl;
-        return;
+    FD_ZERO(&readfds);
+    FD_SET(server_socket, &readfds);
+    FD_SET(ControlSock[0], &readfds);
+
+    if (select(maxfd + 1, &readfds, nullptr, nullptr, nullptr) < 0) {
+        perror("select failed");
+        return false;
     }
 
+    if (FD_ISSET(ControlSock[0], &readfds)) {
+        char stop = 0;
+        if (read(ControlSock[0], &stop, sizeof(stop)) < 0) {
+            perror("read failed");
+        }
+        return false;
+    }
+
+    if (FD_ISSET(server_socket, &readfds) && !Terminated) {
+        return true; // Connection accepted
+    }
+
+    return false;
+}
+
+void RTMPServer::HandleNextClient(int server_socket) {
+
+    int cs = accept(server_socket, nullptr, nullptr);
+    if (cs < 0) {
+        perror("accept failed");
+        return;
+    }
+    ClientSocket = cs;
+
     AutoClose clientSocketCloser([&]() {
-        close(ClientSocket);
-        ClientSocket = -1;
+        close(cs);
     });
 
     if (EnableLogging) {
         cout << "Client connected" << endl;
     }
+
+    RollingBuffer Buffer; // Keep left-overs from previous chunks
 
     RTMPHandshake handshake;
     handshake.Buffer = &Buffer;
@@ -128,16 +181,15 @@ void RTMPServer::HandleClients() {
     bool sent_s2 = false;
 
     while (!Terminated) {
-        ssize_t recv_bytes = recv(ClientSocket, RecvBuffer, sizeof(RecvBuffer), 0);
-        //cout << "Handshake: Received " << recv_bytes << " bytes of data from client" << endl;
-        if (recv_bytes > 0) {
-            handshake.ParseMessage(RecvBuffer, recv_bytes);
-        } else if (recv_bytes <= 0) {
+        ssize_t recv_bytes = recv(cs, RecvBuffer.data(), RecvBuffer.size(), 0);
+        if (recv_bytes <= 0) {
             if (EnableLogging) {
                 cout << "Client disconnected" << endl;
             }
             return;
         }
+
+        handshake.ParseMessage(RecvBuffer.data(), recv_bytes);
 
         // If we have C0 but we haven't sent S0 and S1 yet:
         if (!sent_s0s1 && handshake.State.Round >= 1) {
@@ -182,17 +234,17 @@ void RTMPServer::HandleClients() {
     const uint8_t* parse_data = nullptr;
     ssize_t bytesRead = 0;
 
-    while (!Terminated) {
+    while (!Terminated)
+    {
         // We parse first because there may be some data left over from the handshake
-        while (parser.ParseChunk(parse_data, bytesRead))
-        {
+        while (parser.ParseChunk(parse_data, bytesRead)) {
             // Pass null next time to continue parsing the same buffer
             parse_data = nullptr;
             bytesRead = 0;
         }
 
-        parse_data = RecvBuffer;
-        bytesRead = recv(ClientSocket, RecvBuffer, sizeof(RecvBuffer), 0);
+        parse_data = RecvBuffer.data();
+        bytesRead = recv(cs, RecvBuffer.data(), RecvBuffer.size(), 0);
         //cout << "Session: Received " << bytesRead << " bytes of data from client" << endl;
         if (bytesRead <= 0) {
             if (EnableLogging) {
@@ -207,7 +259,7 @@ bool RTMPServer::SendS0S1() {
     Handshake[0] = kRtmpS0ServerVersion;
     WriteUInt32(Handshake + 1, GetMsec());
     FillRandomBuffer(Handshake + 1 + 4, 1536 - 4, GetMsec());
-    ssize_t bytes = send(ClientSocket.load(), Handshake, sizeof(Handshake), MSG_NOSIGNAL);
+    ssize_t bytes = send(ClientSocket, Handshake, sizeof(Handshake), MSG_NOSIGNAL);
     return bytes == sizeof(Handshake);
 }
 
@@ -215,15 +267,12 @@ bool RTMPServer::SendS2(uint32_t peer_time, const void* client_random) {
     WriteUInt32(RandomEcho, peer_time);
     WriteUInt32(RandomEcho + 4, 0);
     memcpy(RandomEcho + 8, client_random, 1536 - 8);
-    ssize_t bytes = send(ClientSocket.load(), RandomEcho, sizeof(RandomEcho), MSG_NOSIGNAL);
+    ssize_t bytes = send(ClientSocket, RandomEcho, sizeof(RandomEcho), MSG_NOSIGNAL);
     return bytes == sizeof(RandomEcho);
 }
 
 bool RTMPServer::CheckC2(const void* echo) {
-    if (0 != memcmp(Handshake + 1 + 4 + 4, echo, 1536 - 8)) {
-        return false;
-    }
-    return true;
+    return 0 == memcmp(Handshake + 1 + 4 + 4, echo, 1536 - 8);
 }
 
 void RTMPServer::OnNeedAck(uint32_t bytes) {
@@ -242,7 +291,7 @@ bool RTMPServer::SendChunkAck(uint32_t ack_bytes) {
     msg.WriteUInt32(0/*stream_id*/);
         msg.WriteUInt32(ack_bytes);
 
-    ssize_t bytes = send(ClientSocket.load(), msg.GetData(), msg.GetLength(), MSG_NOSIGNAL);
+    ssize_t bytes = send(ClientSocket, msg.GetData(), msg.GetLength(), MSG_NOSIGNAL);
     return bytes == msg.GetLength();
 }
 
@@ -328,7 +377,7 @@ bool RTMPServer::SendConnectResult(
         params.WriteUInt16(EVENT_STREAM_BEGIN);
         params.WriteUInt32(0);
 
-    ssize_t bytes = send(ClientSocket.load(), params.GetData(), params.GetLength(), MSG_NOSIGNAL);
+    ssize_t bytes = send(ClientSocket, params.GetData(), params.GetLength(), MSG_NOSIGNAL);
     return bytes == params.GetLength();
 }
 
@@ -352,7 +401,7 @@ bool RTMPServer::SendNullResult(double command_number) {
     msg.WriteUInt32(0/*stream_id*/);
         msg.WriteData(amf.GetData(), amf.GetLength());
 
-    ssize_t bytes = send(ClientSocket.load(), msg.GetData(), msg.GetLength(), MSG_NOSIGNAL);
+    ssize_t bytes = send(ClientSocket, msg.GetData(), msg.GetLength(), MSG_NOSIGNAL);
     return bytes == msg.GetLength();
 }
 
@@ -363,5 +412,12 @@ void RTMPServer::OnAvccVideo(
     const uint8_t* data,
     int bytes)
 {
-    Callback(keyframe, stream, timestamp, data, bytes);
+    // Check if this is a new stream
+    bool new_stream = false;
+    if (seen_streams.find(stream) == seen_streams.end()) {
+        seen_streams[stream] = true;
+        new_stream = true;
+    }
+
+    Callback(new_stream, keyframe, stream, timestamp, data, bytes);
 }
