@@ -2,7 +2,7 @@
 
 Simple unidirectional RTMP video stream receiver.  Implements a subset of the RTMP protocol needed to receive video from a DJI RC Pro controller (you'd specify the server IP address in the DJI controller settings).
 
-Clean codebase that handles edge-cases well, such as TCP splitting packets up into different receive buffers, programmatic termination before/after/during a connection, graceful handling of disconnections, and more.
+Clean codebase that handles edge-cases well, such as TCP splitting packets up into different receive buffers, programmatic termination before/after/during a connection, graceful handling of disconnections, and more.  Verified with Wireshark that the protocol looks correct and the server is not sending any extraneous data.
 
 ## Testing
 
