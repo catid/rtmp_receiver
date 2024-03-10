@@ -264,6 +264,9 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
 
 void RTMPSession::OnMessage(const RTMPHeader& head, const uint8_t* data, int bytes)
 {
+    // Note: This function only implements the subset of the RTMP protocol needed to receive video.
+    // However, the chunk parsing logic above is fully-featured and can handle the complete protocol.
+
     LOG(std::cout << "Received message cs_id=" << head.cs_id << " stream=" << head.stream_id << " ts=" << head.timestamp << " type=" << GetPacketTypeName(head.type_id) << " len=" << head.length << std::endl;)
     //LOG(PrintFirst64BytesAsHex(data, bytes);)
 

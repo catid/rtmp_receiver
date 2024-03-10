@@ -180,7 +180,8 @@ void RTMPServer::HandleNextClient(int server_socket) {
     bool sent_s0s1 = false;
     bool sent_s2 = false;
 
-    while (!Terminated) {
+    while (!Terminated)
+    {
         ssize_t recv_bytes = recv(cs, RecvBuffer.data(), RecvBuffer.size(), 0);
         if (recv_bytes <= 0) {
             if (EnableLogging) {
