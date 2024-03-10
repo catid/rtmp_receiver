@@ -1,5 +1,5 @@
-#ifndef BYTESTREAMWRITER_H
-#define BYTESTREAMWRITER_H
+#ifndef BYTESTREAM_WRITER_H
+#define BYTESTREAM_WRITER_H
 
 #include <cstdint>
 #include <vector>
@@ -25,4 +25,4 @@ private:
     std::vector<uint8_t> buffer_;
 };
 
-#endif // BYTESTREAMWRITER_H
+#endif // BYTESTREAM_WRITER_H

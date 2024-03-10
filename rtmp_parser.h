@@ -1,7 +1,6 @@
-#ifndef RTMPPARSER_H
-#define RTMPPARSER_H
+#ifndef RTMP_PARSER_H
+#define RTMP_PARSER_H
 
-#include <iostream>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -180,4 +179,4 @@ private:
     uint32_t ReceivedBytes = 0;
 };
 
-#endif // RTMPPARSER_H
+#endif // RTMP_PARSER_H
