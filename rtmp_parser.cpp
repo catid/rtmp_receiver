@@ -8,6 +8,17 @@
 #include <chrono>
 using namespace std;
 
+#ifdef DEBUG
+# define ENABLE_DEBUG_LOGS
+#endif
+
+#ifdef ENABLE_DEBUG_LOGS
+# define LOG(x) x
+#else
+# define LOG(x)
+#endif
+
+
 //------------------------------------------------------------------------------
 // Tools
 
@@ -18,7 +29,7 @@ static void AppendDataToVector(std::vector<uint8_t>& vec, const uint8_t* data, i
 }
 
 static void PrintFirst64BytesAsHex(const uint8_t* data, size_t size) {
-    size_t bytesToPrint = (size < 64) ? size : 64; // Limit to the first 64 bytes
+    size_t bytesToPrint = (size < 512) ? size : 512; // Limit to the first 64 bytes
 
     for (size_t i = 0; i < bytesToPrint; ++i) {
         // Print each byte in hex format, padded with 0 if necessary
@@ -91,7 +102,7 @@ void RollingBuffer::Continue(const uint8_t* &data, int &bytes)
 {
     std::vector<uint8_t>& prev_buffer = Buffers[BufferIndex];
 
-    cout << "RollingBuffer: Continue: BufferIndex=" << BufferIndex << ", bytes=" << bytes << " prev_buffer.size=" << prev_buffer.size() << endl;
+    //LOG(cout << "RollingBuffer: Continue: BufferIndex=" << BufferIndex << ", bytes=" << bytes << " prev_buffer.size=" << prev_buffer.size() << endl;)
 
     // Continue from previous buffer if available
     if (prev_buffer.size() > 0) {
@@ -112,7 +123,7 @@ void RollingBuffer::StoreRemaining(const uint8_t* data, int bytes)
     next_buffer.clear();
     AppendDataToVector(next_buffer, data, bytes);
 
-    cout << "RollingBuffer: StoreRemaining: BufferIndex=" << BufferIndex << ", bytes=" << bytes << " next_buffer.size=" << next_buffer.size() << endl;
+    //LOG(cout << "RollingBuffer: StoreRemaining: BufferIndex=" << BufferIndex << ", bytes=" << bytes << " next_buffer.size=" << next_buffer.size() << endl;)
 }
 
 void RollingBuffer::Clear()
@@ -191,10 +202,8 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
 
     ByteStream stream(buffer, bytes);
 
-    std::cout << "Received chunk bytes: " << bytes << std::endl;
-    PrintFirst64BytesAsHex(buffer, bytes);
-
-    bool has_message = false;
+    //LOG(std::cout << "Received chunk bytes: " << bytes << std::endl;)
+    //LOG(PrintFirst64BytesAsHex(buffer, bytes);)
 
     while (!stream.IsEndOfStream()) {
         // Store the start of this stream message so if it is truncated we can store it
@@ -228,7 +237,7 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
                 head.length = stream.ReadUInt24();
                 head.type_id = stream.ReadUInt8();
                 if (head.fmt == 0) {
-                    head.stream_id = stream.ReadUInt32();
+                    head.stream_id = stream.ReadUInt32(false/*this is the only field...*/);
                 }
             }
             if (head.fmt == 2 && prev_chunk) {
@@ -250,56 +259,68 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
             head.timestamp += prev_chunk->header.timestamp;
         }
 
-        std::cout << "Received chunk: fmt=" << (int)head.fmt << ", cs_id=" << head.cs_id
-            << ", ts=" << head.timestamp << ", len=" << head.length << ", type_id="
-            << (int)head.type_id << ", stream_id=" << head.stream_id << std::endl;
-
-        const uint8_t* message_data = stream.ReadData(head.length);
-
-        // If truncated:
+        // If message fits in a single chunk, then attempt to read it directly.
+        int expected_bytes = head.length;
+        if (expected_bytes > ChunkSize) {
+            if (prev_chunk) {
+                expected_bytes -= static_cast<int>( prev_chunk->AccumulatedData.size() );
+            }
+            if (expected_bytes > ChunkSize) {
+                expected_bytes = ChunkSize;
+            }
+        }
+        const uint8_t* chunk_data = stream.ReadData(expected_bytes);
         if (stream.HasError()) {
-            std::cout << "Error: truncated message stream.RemainingBytes()=" << stream.RemainingBytes() << ", head.length = " << head.length << std::endl;
+            //LOG(std::cout << "Received chunk partial (waiting for more) on cs=" << head.cs_id << std::endl;)
+            // Have not finished receiving the current chunk so save until more data arrives.
             Buffer->StoreRemaining(stream_start, stream_remaining);
             return false;
         }
 
+        //LOG(std::cout << "Received chunk partial (waiting for more)" << std::endl;)
+
         // Accumulate bytes processed in this chunk
         ReceivedBytes += stream.RemainingBytes() - stream_remaining;
         if (ReceivedBytes > WindowAckSize) {
-            MustAck = true;
-            MustAckBytes = ReceivedBytes;
+            Handler->OnNeedAck(ReceivedBytes);
             ReceivedBytes = 0;
         }
 
-        OnMessage(head, message_data, head.length);
-        has_message = true;
-
-        // Completed a message, so store the state for next time
         if (!prev_chunk) {
             prev_chunk = std::make_shared<RTMPChunk>();
             chunk_streams[head.cs_id] = prev_chunk;
         }
-        prev_chunk->header = head;
+        prev_chunk->header = head; // Store header info for decoding the next chunk header
 
-        // Allow outer loop to process each message
-        if (!stream.IsEndOfStream()) {
-            Buffer->StoreRemaining(stream.PeekData(), stream.RemainingBytes());
-            return true;
+        const uint8_t* message_data = chunk_data;
+
+        if (head.length > ChunkSize) {
+            AppendDataToVector(prev_chunk->AccumulatedData, chunk_data, expected_bytes);
+            message_data = prev_chunk->AccumulatedData.data();
+
+            if (head.length > static_cast<int>( prev_chunk->AccumulatedData.size() )) {
+                //LOG(std::cout << "Received message partial (waiting for more) on cs=" << head.cs_id << std::endl;)
+                continue;
+            }
         }
+
+        OnMessage(head, message_data, head.length);
+
+        prev_chunk->AccumulatedData.clear();
     }
 
     Buffer->Clear();
-    return has_message;
+    return false;
 }
 
-void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int bytes)
+void RTMPSession::OnMessage(const RTMPHeader& head, const uint8_t* data, int bytes)
 {
-    std::cout << "Received message (" << GetPacketTypeName(header.type_id) << ") with bytes: " << bytes << std::endl;
-    PrintFirst64BytesAsHex(data, bytes);
+    LOG(std::cout << "Received message cs_id=" << head.cs_id << " stream=" << head.stream_id << " ts=" << head.timestamp << " type=" << GetPacketTypeName(head.type_id) << " len=" << head.length << std::endl;)
+    //LOG(PrintFirst64BytesAsHex(data, bytes);)
 
     ByteStream stream(data, bytes);
 
-    switch (header.type_id) {
+    switch (head.type_id) {
     case CHUNK_SIZE:
         ChunkSize = stream.ReadUInt32();
         return;
@@ -327,6 +348,66 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
     case AUDIO:
         break;
     case VIDEO:
+        {
+            ByteStream stream(data, bytes);
+
+            const uint8_t type_byte = stream.ReadUInt8();
+            const int frame_type = type_byte >> 4;
+            const int codec = type_byte & 0xf;
+
+            if (codec != VIDEO_CODEC_H264) {
+                cout << "Received unknown video codec type=" << codec << endl;
+                return;
+            }
+
+            if (frame_type != VIDEO_FRAME_TYPE_KEY && frame_type != VIDEO_FRAME_TYPE_INTER) {
+                cout << "Received unknown video frame type=" << frame_type << endl;
+                return;
+            }
+            const bool key_frame = (frame_type == VIDEO_FRAME_TYPE_KEY);
+
+            const uint8_t packet_type = stream.ReadUInt8();
+            const uint32_t composition_time_offset = stream.ReadUInt24();
+            const uint32_t dts = head.timestamp;
+            const uint32_t pts = dts + composition_time_offset;
+
+            if (stream.HasError()) {
+                cout << "Error: truncated video packet" << endl;
+                return;
+            }
+
+            if (packet_type == AVC_SEQUENCE_HEADER) {
+                stream.ReadData(5); // skip AVC header
+                const int num_sps = stream.ReadUInt8() & 0x1f;
+                for (int i = 0; i < num_sps; ++i) {
+                    const uint16_t sps_length = stream.ReadUInt16();
+                    const uint8_t* sps_data = stream.ReadData(sps_length);
+                    cout << "Received SPS len=" << sps_length << endl;
+                    //Handler->OnVideo(head.stream_id, head.timestamp, data, bytes);
+                }
+
+                const int num_pps = stream.ReadUInt8();
+                for (int i = 0; i < num_pps; ++i) {
+                    const uint16_t pps_length = stream.ReadUInt16();
+                    const uint8_t* pps_data = stream.ReadData(pps_length);
+                    cout << "Received PPS len=" << pps_length << endl;
+                    //Handler->OnVideo(head.stream_id, head.timestamp, data, bytes);
+                }
+            } else if (packet_type == AVC_NALU) {
+                while (!stream.IsEndOfStream()) {
+                    const uint32_t nalu_length = stream.ReadUInt32();
+                    const uint8_t* nalu_data = stream.ReadData(nalu_length);
+                    cout << "Received NALU len=" << nalu_length << " key_frame=" << key_frame << endl;
+                    //Handler->OnVideo(head.stream_id, head.timestamp, data, bytes);
+                }
+            } else {
+                cout << "Received unknown video packet type=" << packet_type << endl;
+                return;
+            }
+            if (stream.HasError()) {
+                cout << "Error: truncated video packet" << endl;
+            }
+        }
         break;
     case DATA_AMF3:
         break;
@@ -335,6 +416,64 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
     case COMMAND_AMF3:
         break;
     case DATA_AMF0:
+        {
+            int object_nest_level = 0;
+            while (stream.RemainingBytes() > 0) {
+                if (object_nest_level > 0) {
+                    uint32_t string_length = stream.ReadUInt16();
+                    if (string_length == 0) {
+                        LOG(std::cout << "} null string at end of object" << std::endl;)
+                    } else {
+                        const uint8_t* string_data = stream.ReadData(string_length);
+                        std::string value = CreateStringFromBytes(string_data, string_length);
+                        LOG(std::cout << "Received AMF0 object string key: " << value << std::endl;)
+                    }
+                }
+                uint32_t amf0_type = stream.ReadUInt8();
+                if (amf0_type == ObjectEndMarker) {
+                    --object_nest_level;
+                    if (object_nest_level < 0) {
+                        break;
+                    }
+                }
+                else if (amf0_type == NumberMarker) {
+                    double value = stream.ReadDouble();
+                    LOG(std::cout << "Received AMF0 number: " << value << std::endl;)
+                }
+                else if (amf0_type == BooleanMarker) {
+                    bool value = stream.ReadUInt8() != 0;
+                    LOG(std::cout << "Received AMF0 boolean: " << value << std::endl;)
+                }
+                else if (amf0_type == StringMarker) {
+                    uint32_t string_length = stream.ReadUInt16();
+                    const uint8_t* string_data = stream.ReadData(string_length);
+                    std::string value = CreateStringFromBytes(string_data, string_length);
+
+                    LOG(std::cout << "Received AMF0 string: " << value << std::endl;)
+                }
+                else if (amf0_type == NullMarker) {
+                    LOG(std::cout << "Received AMF0 null" << std::endl;)
+                }
+                else if (amf0_type == UndefinedMarker) {
+                    LOG(std::cout << "Received AMF0 undefined" << std::endl;)
+                }
+                else if (amf0_type == ReferenceMarker) {
+                    uint32_t reference_id = stream.ReadUInt16();
+                    LOG(std::cout << "Received AMF0 reference: " << reference_id << std::endl;)
+                }
+                else if (amf0_type == ECMAArrayMarker) {
+                    uint32_t array_length = stream.ReadUInt32();
+                    LOG(std::cout << "Received AMF0 array of length: " << array_length << std::endl;)
+                    ++object_nest_level;
+                }
+                else if (amf0_type == ObjectMarker) {
+                    LOG(std::cout << "Start AMF0 object {" << std::endl;)
+                    ++object_nest_level;
+                } else {
+                    LOG(std::cout << "Unknown AMF0 type: " << (int)amf0_type << std::endl;)
+                }
+            }
+        }
         break;
     case SHARED_OBJECT_AMF0:
         break;
@@ -348,11 +487,11 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                 if (object_nest_level > 0) {
                     uint32_t string_length = stream.ReadUInt16();
                     if (string_length == 0) {
-                        std::cout << "} null string at end of object" << std::endl;
+                        LOG(std::cout << "} null string at end of object" << std::endl;)
                     } else {
                         const uint8_t* string_data = stream.ReadData(string_length);
                         std::string value = CreateStringFromBytes(string_data, string_length);
-                        std::cout << "Received AMF0 object string key: " << value << std::endl;
+                        LOG(std::cout << "Received AMF0 object string key: " << value << std::endl;)
                     }
                 }
                 uint32_t amf0_type = stream.ReadUInt8();
@@ -364,7 +503,7 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                 }
                 else if (amf0_type == NumberMarker) {
                     double value = stream.ReadDouble();
-                    std::cout << "Received AMF0 number: " << value << std::endl;
+                    LOG(std::cout << "Received AMF0 number: " << value << std::endl;)
                     if (!has_command_number) {
                         command_number = value;
                         has_command_number = true;
@@ -372,7 +511,7 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
                 }
                 else if (amf0_type == BooleanMarker) {
                     bool value = stream.ReadUInt8() != 0;
-                    std::cout << "Received AMF0 boolean: " << value << std::endl;
+                    LOG(std::cout << "Received AMF0 boolean: " << value << std::endl;)
                 }
                 else if (amf0_type == StringMarker) {
                     uint32_t string_length = stream.ReadUInt16();
@@ -381,44 +520,37 @@ void RTMPSession::OnMessage(const RTMPHeader& header, const uint8_t* data, int b
 
                     if (command_name.empty()) {
                         command_name = value;
-                        std::cout << "Received AMF0 command: " << value << std::endl;
+                        LOG(std::cout << "Received AMF0 command: " << value << std::endl;)
                     } else {
-                        std::cout << "Received AMF0 string: " << value << std::endl;
+                        LOG(std::cout << "Received AMF0 string: " << value << std::endl;)
                     }
                 }
                 else if (amf0_type == NullMarker) {
-                    std::cout << "Received AMF0 null" << std::endl;
+                    LOG(std::cout << "Received AMF0 null" << std::endl;)
                 }
                 else if (amf0_type == UndefinedMarker) {
-                    std::cout << "Received AMF0 undefined" << std::endl;
+                    LOG(std::cout << "Received AMF0 undefined" << std::endl;)
                 }
                 else if (amf0_type == ReferenceMarker) {
                     uint32_t reference_id = stream.ReadUInt16();
-                    std::cout << "Received AMF0 reference: " << reference_id << std::endl;
+                    LOG(std::cout << "Received AMF0 reference: " << reference_id << std::endl;)
                 }
                 else if (amf0_type == ECMAArrayMarker) {
-                    uint32_t array_length = stream.ReadUInt16();
-                    std::cout << "Received AMF0 array of length: " << array_length << std::endl;
-                    // FIXME: Handle array elements
+                    uint32_t array_length = stream.ReadUInt32();
+                    LOG(std::cout << "Received AMF0 array of length: " << array_length << std::endl;)
+                    ++object_nest_level;
                 }
                 else if (amf0_type == ObjectMarker) {
-                    std::cout << "Start AMF0 object {" << std::endl;
+                    LOG(std::cout << "Start AMF0 object {" << std::endl;)
                     ++object_nest_level;
                 } else {
-                    std::cout << "Unknown AMF0 type: " << (int)amf0_type << std::endl;
+                    LOG(std::cout << "Unknown AMF0 type: " << (int)amf0_type << std::endl;)
                 }
             }
 
-            cout << " command_name='" << command_name << "'" << endl;
+            LOG(cout << " command_name='" << command_name << "'" << endl;)
 
-            // https://rtmp.veriskope.com/docs/spec/#72-command-messages
-            if (command_name == "connect") {
-                cout << "MustSetParams=true" << endl;
-                MustSetParams = true;
-            } else {
-                NeedsNullResponse = true;
-                NullResponseNumber = command_number;
-            }
+            Handler->OnMessage(command_name, command_number);
         }
         break;
     case AGGREGATE:

@@ -40,13 +40,20 @@ uint32_t ByteStream::ReadUInt24() {
     return value;
 }
 
-uint32_t ByteStream::ReadUInt32() {
+uint32_t ByteStream::ReadUInt32(bool big_endian) {
     uint32_t value = 0;
     if (offset_ + 4 <= size_) {
-        value = (static_cast<uint32_t>(data_[offset_]) << 24) |
-                (static_cast<uint32_t>(data_[offset_ + 1]) << 16) |
-                (static_cast<uint32_t>(data_[offset_ + 2]) << 8) |
-                (static_cast<uint32_t>(data_[offset_ + 3]));
+        if (big_endian) {
+            value = (static_cast<uint32_t>(data_[offset_]) << 24) |
+                    (static_cast<uint32_t>(data_[offset_ + 1]) << 16) |
+                    (static_cast<uint32_t>(data_[offset_ + 2]) << 8) |
+                    (static_cast<uint32_t>(data_[offset_ + 3]));
+        } else {
+            value = (static_cast<uint32_t>(data_[offset_ + 3]) << 24) |
+                    (static_cast<uint32_t>(data_[offset_ + 2]) << 16) |
+                    (static_cast<uint32_t>(data_[offset_ + 1]) << 8) |
+                    (static_cast<uint32_t>(data_[offset_]));
+        }
         offset_ += 4;
     } else {
         error_ = true;

@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 add_executable(rtmp_receiver
     rtmp_receiver.cpp
     rtmp_parser.cpp
+    rtmp_parser.h
     bytestream.cpp
+    bytestream.h
     bytestream_writer.cpp
+    bytestream_writer.h
 )

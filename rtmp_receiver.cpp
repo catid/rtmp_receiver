@@ -12,6 +12,7 @@
 #include "bytestream_writer.h"
 
 #include <iostream>
+#include <iomanip>
 using namespace std;
 
 
@@ -54,17 +55,27 @@ private:
     std::function<void()> f;
 };
 
-enum LimitType {
-    LIMIT_HARD = 0,
-    LIMIT_SOFT = 1,
-    LIMIT_DYNAMIC = 2
-};
+static void PrintFirst64BytesAsHex(const uint8_t* data, size_t size) {
+    size_t bytesToPrint = (size < 512) ? size : 512; // Limit to the first 64 bytes
+
+    for (size_t i = 0; i < bytesToPrint; ++i) {
+        // Print each byte in hex format, padded with 0 if necessary
+        std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]) << " ";
+        
+        // Optional: add a new line every 16 bytes for readability
+        if ((i + 1) % 16 == 0) {
+            std::cout << std::endl;
+        }
+    }
+
+    std::cout << std::dec << std::endl; // Switch back to decimal for any further output
+}
 
 
 //------------------------------------------------------------------------------
 // RTMPServer
 
-class RTMPServer {
+class RTMPServer : protected RTMPHandler {
 private:
     int serverSocket = -1;
     int clientSocket = -1;
@@ -102,8 +113,7 @@ public:
     }
 
 private:
-    RollingBuffer Buffer; // Keep left-overs from previous chunks
-    uint8_t packetData[2048];
+    uint8_t RecvBuffer[2048 * 16];
 
     void run(int port) {
         serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -140,6 +150,14 @@ private:
 
         std::cout << "RTMP server listening on port " << port << std::endl;
 
+        while (running) {
+            HandleClients();
+        }
+    }
+
+    void HandleClients() {
+        RollingBuffer Buffer; // Keep left-overs from previous chunks
+
         clientSocket = accept(serverSocket, nullptr, nullptr);
         if (clientSocket == -1) {
             std::cout << "Failed to accept client connection" << std::endl;
@@ -159,10 +177,10 @@ private:
         bool sent_s2 = false;
 
         while (running) {
-            ssize_t bytesRead = recv(clientSocket, packetData, sizeof(packetData), 0);
+            ssize_t bytesRead = recv(clientSocket, RecvBuffer, sizeof(RecvBuffer), 0);
             //std::cout << "Handshake: Received " << bytesRead << " bytes of data from client" << std::endl;
             if (bytesRead > 0) {
-                handshake.ParseMessage(packetData, bytesRead);
+                handshake.ParseMessage(RecvBuffer, bytesRead);
             } else if (bytesRead == 0) {
                 std::cout << "Client disconnected" << std::endl;
                 break;
@@ -174,7 +192,7 @@ private:
             // If we have C0 but we haven't sent S0 and S1 yet:
             if (!sent_s0s1 && handshake.State.Round >= 1) {
                 if (handshake.State.ClientVersion != kRtmpS0ServerVersion) {
-                    std::cout << "Invalid version from client" << std::endl;
+                    std::cout << "Invalid version from client = " << handshake.State.ClientVersion << std::endl;
                     return;
                 }
                 if (!sendS0S1()) {
@@ -207,6 +225,7 @@ private:
 
         RTMPSession parser;
         parser.Buffer = &Buffer;
+        parser.Handler = this;
 
         const uint8_t* parse_data = nullptr;
         ssize_t bytesRead = 0;
@@ -218,21 +237,10 @@ private:
                 // Pass null next time to continue parsing the same buffer
                 parse_data = nullptr;
                 bytesRead = 0;
-
-                if (parser.MustSetParams) {
-                    parser.MustSetParams = false;
-                    sendWindowAckSize(2500000);
-                    sendChannelParams(2500000, LIMIT_DYNAMIC, 60000);
-                    sendConnectResult();
-                }
-                else if (parser.NeedsNullResponse) {
-                    parser.NeedsNullResponse = false;
-                    sendNullResponse(parser.NullResponseNumber);
-                }
             }
 
-            parse_data = packetData;
-            bytesRead = recv(clientSocket, packetData, sizeof(packetData), 0);
+            parse_data = RecvBuffer;
+            bytesRead = recv(clientSocket, RecvBuffer, sizeof(RecvBuffer), 0);
             //std::cout << "Session: Received " << bytesRead << " bytes of data from client" << std::endl;
             if (bytesRead == 0) {
                 std::cout << "Client disconnected" << std::endl;
@@ -279,25 +287,55 @@ private:
         buffer.insert(buffer.end(), data, data + size);
     }
 
-    bool sendWindowAckSize(uint32_t window_ack_size) {
+    void OnNeedAck(uint32_t bytes) override {
+        sendChunkAck(bytes);
+    }
+
+    bool sendChunkAck(uint32_t ack_bytes) {
+        uint32_t timestamp = 0;
+
+        ByteStreamWriter msg;
+
+        msg.WriteUInt8(3); // cs_id = 3, fmt = 0
+        msg.WriteUInt24(timestamp);
+        msg.WriteUInt24(4/*length*/);
+        msg.WriteUInt8(COMMAND_AMF0);
+        msg.WriteUInt32(0/*stream_id*/);
+            msg.WriteUInt32(ack_bytes);
+
+        ssize_t bytes = send(clientSocket, msg.GetData(), msg.GetLength(), 0);
+        return bytes == msg.GetLength();
+    }
+
+    void OnMessage(const std::string& name, double number) override {
+        if (name == "connect") {
+            const uint32_t window_ack_size = 2500000;
+            const uint32_t max_unacked_bytes = 2500000;
+            const int limit_type = LIMIT_DYNAMIC;
+            const uint32_t chunk_size = 60000;
+
+            sendConnectResult(window_ack_size, max_unacked_bytes, limit_type, chunk_size);
+        } else {
+            sendNullResult(number);
+        }
+    }
+
+    bool sendConnectResult(
+        uint32_t window_ack_size,
+        uint32_t max_unacked_bytes,
+        int limit_type,
+        uint32_t chunk_size)
+    {
         uint32_t timestamp = 0;
 
         ByteStreamWriter params;
+
         params.WriteUInt8(2); // cs_id = 2, fmt = 0
         params.WriteUInt24(timestamp);
         params.WriteUInt24(4/*length*/);
         params.WriteUInt8(WINDOW_ACK_SIZE);
         params.WriteUInt32(0/*stream_id*/);
             params.WriteUInt32(window_ack_size);
-
-        ssize_t bytes = send(clientSocket, params.GetData(), params.GetLength(), 0);
-        return bytes == params.GetLength();
-    }
-
-    bool sendChannelParams(uint32_t max_unacked_bytes, int limit_type, uint32_t chunk_size) {
-        uint32_t timestamp = 0;
-
-        ByteStreamWriter params;
 
         params.WriteUInt8(2); // cs_id = 2, fmt = 0
         params.WriteUInt24(timestamp);
@@ -313,24 +351,6 @@ private:
         params.WriteUInt8(CHUNK_SIZE);
         params.WriteUInt32(0/*stream_id*/);
             params.WriteUInt32(chunk_size);
-#if 0
-        params.WriteUInt8(2); // cs_id = 2, fmt = 0
-        params.WriteUInt24(timestamp);
-        params.WriteUInt24(6/*length*/);
-        params.WriteUInt8(USER_CONTROL);
-        params.WriteUInt32(0/*stream_id*/);
-            params.WriteUInt16(EVENT_STREAM_BEGIN);
-            params.WriteUInt32(0);
-#endif
-        ssize_t bytes = send(clientSocket, params.GetData(), params.GetLength(), 0);
-        cout << "SEND sendChannelParams" << endl;
-        return bytes == params.GetLength();
-    }
-
-    bool sendConnectResult() {
-        uint32_t timestamp = 0;
-
-        ByteStreamWriter msg;
 
         ByteStreamWriter amf;
         amf.WriteUInt8(StringMarker);
@@ -354,20 +374,26 @@ private:
             amf.WriteUInt16(0);
         amf.WriteUInt8(ObjectEndMarker);
 
-        msg.WriteUInt8(3); // cs_id = 3, fmt = 0
-        msg.WriteUInt24(timestamp);
-        msg.WriteUInt24(amf.GetLength()/*length*/);
-        msg.WriteUInt8(COMMAND_AMF0);
-        msg.WriteUInt32(0/*stream_id*/);
-            msg.WriteData(amf.GetData(), amf.GetLength());
+        params.WriteUInt8(3); // cs_id = 3, fmt = 0
+        params.WriteUInt24(timestamp);
+        params.WriteUInt24(amf.GetLength()/*length*/);
+        params.WriteUInt8(COMMAND_AMF0);
+        params.WriteUInt32(0/*stream_id*/);
+            params.WriteData(amf.GetData(), amf.GetLength());
 
-        cout << "Sent connect response" << endl;
+        params.WriteUInt8(2); // cs_id = 2, fmt = 0
+        params.WriteUInt24(timestamp);
+        params.WriteUInt24(6/*length*/);
+        params.WriteUInt8(USER_CONTROL);
+        params.WriteUInt32(0/*stream_id*/);
+            params.WriteUInt16(EVENT_STREAM_BEGIN);
+            params.WriteUInt32(0);
 
-        ssize_t bytes = send(clientSocket, msg.GetData(), msg.GetLength(), 0);
-        return bytes == msg.GetLength();
+        ssize_t bytes = send(clientSocket, params.GetData(), params.GetLength(), 0);
+        return bytes == params.GetLength();
     }
 
-    bool sendNullResponse(double command_number) {
+    bool sendNullResult(double command_number) {
         uint32_t timestamp = 0;
 
         ByteStreamWriter msg;
@@ -387,10 +413,13 @@ private:
         msg.WriteUInt32(0/*stream_id*/);
             msg.WriteData(amf.GetData(), amf.GetLength());
 
-        cout << "Sent null response" << endl;
-
         ssize_t bytes = send(clientSocket, msg.GetData(), msg.GetLength(), 0);
         return bytes == msg.GetLength();
+    }
+
+    void OnVideo(uint32_t stream, uint32_t timestamp, const uint8_t* data, int bytes) override {
+        cout << "Received video data on stream=" << stream << " ts=" << timestamp << " bytes=" << bytes << endl;
+        PrintFirst64BytesAsHex(data, bytes);
     }
 };
 

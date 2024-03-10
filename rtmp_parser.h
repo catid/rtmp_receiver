@@ -12,7 +12,8 @@
 //------------------------------------------------------------------------------
 // Definitions
 
-// RTMP packet types
+// Reference: https://rtmp.veriskope.com/docs/spec/
+
 enum RTMPPacketType {
     CHUNK_SIZE = 1,
     ABORT = 2,
@@ -41,7 +42,6 @@ enum AMF0Type {
     ReferenceMarker = 0x07,
     ECMAArrayMarker = 0x08,
     ObjectEndMarker = 0x09
-    // Add other markers as needed
 };
 
 enum EventType {
@@ -54,6 +54,34 @@ enum EventType {
     EVENT_USER_CONTROL = 6,
     EVENT_PING = 7,
     EVENT_PONG = 8,
+};
+
+enum LimitType {
+    LIMIT_HARD = 0,
+    LIMIT_SOFT = 1,
+    LIMIT_DYNAMIC = 2
+};
+
+enum VideoFrameType {
+    VIDEO_FRAME_TYPE_KEY = 1,
+    VIDEO_FRAME_TYPE_INTER = 2,
+    VIDEO_FRAME_TYPE_DISPOSABLE = 3,
+    VIDEO_FRAME_TYPE_GENERATED = 4,
+    VIDEO_FRAME_TYPE_COMMAND = 5,
+};
+
+enum VideoCodec {
+    VIDEO_CODEC_VLC1 = 2,
+    VIDEO_CODEC_SCREEN_VIDEO = 3,
+    VIDEO_CODEC_VP6 = 4,
+    VIDEO_CODEC_VP6A = 5,
+    VIDEO_CODEC_SCREEN_VIDEO2 = 6,
+    VIDEO_CODEC_H264 = 7,
+};
+
+enum AvcPacketType {
+    AVC_SEQUENCE_HEADER = 0,
+    AVC_NALU = 1,
 };
 
 static const int kRtmpS0ServerVersion = 3;
@@ -115,11 +143,26 @@ struct RTMPHeader {
 
 struct RTMPChunk {
     RTMPHeader header;
+
+    // Accumulated data from previous ChunkSize chunks
+    std::vector<uint8_t> AccumulatedData;
+};
+
+class RTMPHandler {
+public:
+    // Server should send a chunk acknowledgement
+    virtual void OnNeedAck(uint32_t bytes) = 0;
+
+    // Server should send a COMMAND_AMF0 acknowledgement
+    virtual void OnMessage(const std::string& name, double number) = 0;
+
+    virtual void OnVideo(uint32_t stream, uint32_t timestamp, const uint8_t* data, int bytes) = 0;
 };
 
 class RTMPSession {
 public:
     RollingBuffer* Buffer = nullptr;
+    RTMPHandler* Handler = nullptr;
 
     bool ParseChunk(const void* data, int bytes);
 
@@ -128,17 +171,8 @@ public:
     uint32_t ChunkSize = 128; // default chunk size
     uint32_t AckSequenceNumber = 0; // default ack sequence number
     uint32_t WindowAckSize = 2500000; // default window ack size
-
-    bool MustAck = false;
-    uint32_t MustAckBytes = 0;
-
     uint32_t MaxUnackedBytes = 0;
     int LimitType = 0;
-
-    bool MustSetParams = false;
-
-    bool NeedsNullResponse = false;
-    double NullResponseNumber = 0.0;
 
 private:
     std::unordered_map<uint32_t, std::shared_ptr<RTMPChunk>> chunk_streams; // Active chunk streams
