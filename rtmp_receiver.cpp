@@ -32,9 +32,9 @@ static void SetNonBlocking(int s) {
 
 
 //------------------------------------------------------------------------------
-// RTMPServer
+// RTMPReceiver
 
-bool RTMPServer::Start(RTMPCallback callback, int port, bool enable_logging) {
+bool RTMPReceiver::Start(RTMPCallback callback, int port, bool enable_logging) {
     Callback = callback;
     Port = port;
     EnableLogging = enable_logging;
@@ -49,12 +49,12 @@ bool RTMPServer::Start(RTMPCallback callback, int port, bool enable_logging) {
     SetNonBlocking(ControlSock[1]); // Set write end non-blocking
 
     Terminated = false;
-    Thread = std::make_shared<std::thread>(&RTMPServer::Loop, this);
+    Thread = std::make_shared<std::thread>(&RTMPReceiver::Loop, this);
 
     return true;
 }
 
-void RTMPServer::Stop() {
+void RTMPReceiver::Stop() {
     Terminated = true;
 
     char stop = 's';
@@ -72,7 +72,7 @@ void RTMPServer::Stop() {
     close(ControlSock[1]);
 }
 
-void RTMPServer::Loop() {
+void RTMPReceiver::Loop() {
     // Keep running until the thread is stopped
     while (!Terminated) {
         RunServer();
@@ -82,7 +82,7 @@ void RTMPServer::Loop() {
     }
 }
 
-void RTMPServer::RunServer() {
+void RTMPReceiver::RunServer() {
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) {
         perror("socket failed");
@@ -104,7 +104,7 @@ void RTMPServer::RunServer() {
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(Port);
 
-    if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+    if (::bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
         perror("bind failed");
         return;
     }
@@ -128,7 +128,7 @@ void RTMPServer::RunServer() {
     }
 }
 
-bool RTMPServer::WaitForConnection(int server_socket) {
+bool RTMPReceiver::WaitForConnection(int server_socket) {
     fd_set readfds;
     const int maxfd = max(server_socket, ControlSock[0]);
 
@@ -156,7 +156,7 @@ bool RTMPServer::WaitForConnection(int server_socket) {
     return false;
 }
 
-void RTMPServer::HandleNextClient(int server_socket) {
+void RTMPReceiver::HandleNextClient(int server_socket) {
 
     int cs = accept(server_socket, nullptr, nullptr);
     if (cs < 0) {
@@ -190,7 +190,7 @@ void RTMPServer::HandleNextClient(int server_socket) {
             return;
         }
 
-        handshake.ParseMessage(RecvBuffer.data(), recv_bytes);
+        handshake.ParseMessage(RecvBuffer.data(), static_cast<int>( recv_bytes ));
 
         // If we have C0 but we haven't sent S0 and S1 yet:
         if (!sent_s0s1 && handshake.State.Round >= 1) {
@@ -238,7 +238,7 @@ void RTMPServer::HandleNextClient(int server_socket) {
     while (!Terminated)
     {
         // We parse first because there may be some data left over from the handshake
-        while (parser.ParseChunk(parse_data, bytesRead)) {
+        while (parser.ParseChunk(parse_data, static_cast<int>( bytesRead ))) {
             // Pass null next time to continue parsing the same buffer
             parse_data = nullptr;
             bytesRead = 0;
@@ -256,15 +256,17 @@ void RTMPServer::HandleNextClient(int server_socket) {
     }
 }
 
-bool RTMPServer::SendS0S1() {
+bool RTMPReceiver::SendS0S1() {
+    const uint32_t timestamp = static_cast<uint32_t>( GetMsec() );
+
     Handshake[0] = kRtmpS0ServerVersion;
-    WriteUInt32(Handshake + 1, GetMsec());
-    FillRandomBuffer(Handshake + 1 + 4, 1536 - 4, GetMsec());
+    WriteUInt32(Handshake + 1, timestamp);
+    FillRandomBuffer(Handshake + 1 + 4, 1536 - 4, timestamp);
     ssize_t bytes = send(ClientSocket, Handshake, sizeof(Handshake), MSG_NOSIGNAL);
     return bytes == sizeof(Handshake);
 }
 
-bool RTMPServer::SendS2(uint32_t peer_time, const void* client_random) {
+bool RTMPReceiver::SendS2(uint32_t peer_time, const void* client_random) {
     WriteUInt32(RandomEcho, peer_time);
     WriteUInt32(RandomEcho + 4, 0);
     memcpy(RandomEcho + 8, client_random, 1536 - 8);
@@ -272,15 +274,15 @@ bool RTMPServer::SendS2(uint32_t peer_time, const void* client_random) {
     return bytes == sizeof(RandomEcho);
 }
 
-bool RTMPServer::CheckC2(const void* echo) {
+bool RTMPReceiver::CheckC2(const void* echo) {
     return 0 == memcmp(Handshake + 1 + 4 + 4, echo, 1536 - 8);
 }
 
-void RTMPServer::OnNeedAck(uint32_t bytes) {
+void RTMPReceiver::OnNeedAck(uint32_t bytes) {
     SendChunkAck(bytes);
 }
 
-bool RTMPServer::SendChunkAck(uint32_t ack_bytes) {
+bool RTMPReceiver::SendChunkAck(uint32_t ack_bytes) {
     uint32_t timestamp = 0;
 
     ByteStreamWriter msg;
@@ -298,7 +300,7 @@ bool RTMPServer::SendChunkAck(uint32_t ack_bytes) {
     return bytes == msg.GetLength();
 }
 
-void RTMPServer::OnMessage(const std::string& name, double number) {
+void RTMPReceiver::OnMessage(const std::string& name, double number) {
     if (name == "connect") {
         const uint32_t window_ack_size = 2500000;
         const uint32_t max_unacked_bytes = 2500000;
@@ -311,7 +313,7 @@ void RTMPServer::OnMessage(const std::string& name, double number) {
     }
 }
 
-bool RTMPServer::SendConnectResult(
+bool RTMPReceiver::SendConnectResult(
     uint32_t window_ack_size,
     uint32_t max_unacked_bytes,
     int limit_type,
@@ -367,7 +369,7 @@ bool RTMPServer::SendConnectResult(
 
     params.WriteUInt8(3); // cs_id = 3, fmt = 0
     params.WriteUInt24(timestamp);
-    params.WriteUInt24(amf.GetLength()/*length*/);
+    params.WriteUInt24(static_cast<int>( amf.GetLength() )/*length*/);
     params.WriteUInt8(COMMAND_AMF0);
     params.WriteUInt32(0/*stream_id*/);
         params.WriteData(amf.GetData(), amf.GetLength());
@@ -384,7 +386,7 @@ bool RTMPServer::SendConnectResult(
     return bytes == params.GetLength();
 }
 
-bool RTMPServer::SendNullResult(double command_number) {
+bool RTMPReceiver::SendNullResult(double command_number) {
     uint32_t timestamp = 0;
 
     ByteStreamWriter msg;
@@ -399,7 +401,7 @@ bool RTMPServer::SendNullResult(double command_number) {
 
     msg.WriteUInt8(3); // cs_id = 3, fmt = 0
     msg.WriteUInt24(timestamp);
-    msg.WriteUInt24(amf.GetLength()/*length*/);
+    msg.WriteUInt24(static_cast<int>( amf.GetLength() )/*length*/);
     msg.WriteUInt8(COMMAND_AMF0);
     msg.WriteUInt32(0/*stream_id*/);
         msg.WriteData(amf.GetData(), amf.GetLength());
@@ -408,7 +410,7 @@ bool RTMPServer::SendNullResult(double command_number) {
     return bytes == msg.GetLength();
 }
 
-void RTMPServer::OnAvccVideo(
+void RTMPReceiver::OnAvccVideo(
     bool keyframe,
     uint32_t stream,
     uint32_t timestamp,

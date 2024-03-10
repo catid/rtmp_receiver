@@ -171,7 +171,7 @@ bool ByteStream::IsEndOfStream() const {
 }
 
 int ByteStream::RemainingBytes() const {
-    return size_ - offset_;
+    return static_cast<int>( size_ - offset_ );
 }
 
 const uint8_t* ByteStream::ReadData(int bytes) {

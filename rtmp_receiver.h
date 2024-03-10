@@ -12,7 +12,7 @@
 
 
 //------------------------------------------------------------------------------
-// RTMPServer
+// RTMPReceiver
 
 using RTMPCallback = std::function<void(
     bool new_stream,
@@ -22,9 +22,9 @@ using RTMPCallback = std::function<void(
     const uint8_t* data,
     int bytes)>;
 
-class RTMPServer : protected RTMPHandler {
+class RTMPReceiver : protected RTMPHandler {
 public:
-    ~RTMPServer() {
+    ~RTMPReceiver() {
         Stop();
     }
 

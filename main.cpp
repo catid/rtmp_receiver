@@ -4,7 +4,7 @@ using namespace std;
 #include "rtmp_receiver.h"
 
 int main() {
-    RTMPServer server;
+    RTMPReceiver server;
 
     auto fn = [](
         bool new_stream,

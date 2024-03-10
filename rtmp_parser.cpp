@@ -17,6 +17,8 @@ using namespace std;
 # define LOG(x)
 #endif
 
+#define UNUSED(x) (void)x
+
 
 //------------------------------------------------------------------------------
 // Tools
@@ -59,7 +61,7 @@ void RollingBuffer::Continue(const uint8_t* &data, int &bytes)
             AppendDataToVector(prev_buffer, data, bytes);
         }
         data = prev_buffer.data();
-        bytes = prev_buffer.size();
+        bytes = static_cast<int>( prev_buffer.size() );
     }
 }
 
@@ -179,7 +181,6 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
 
         // Parse message header based on fmt
         head.timestamp = 0;
-        bool extended_timestamp_present = false;
 
         if (head.fmt <= 2) {
             head.timestamp = stream.ReadUInt24();
@@ -360,10 +361,12 @@ void RTMPSession::OnMessage(const RTMPHeader& head, const uint8_t* data, int byt
                 }
                 else if (amf0_type == NumberMarker) {
                     double value = stream.ReadDouble();
+                    UNUSED(value);
                     LOG(std::cout << "Received AMF0 number: " << value << std::endl;)
                 }
                 else if (amf0_type == BooleanMarker) {
                     bool value = stream.ReadUInt8() != 0;
+                    UNUSED(value);
                     LOG(std::cout << "Received AMF0 boolean: " << value << std::endl;)
                 }
                 else if (amf0_type == StringMarker) {
@@ -381,10 +384,12 @@ void RTMPSession::OnMessage(const RTMPHeader& head, const uint8_t* data, int byt
                 }
                 else if (amf0_type == ReferenceMarker) {
                     uint32_t reference_id = stream.ReadUInt16();
+                    UNUSED(reference_id);
                     LOG(std::cout << "Received AMF0 reference: " << reference_id << std::endl;)
                 }
                 else if (amf0_type == ECMAArrayMarker) {
                     uint32_t array_length = stream.ReadUInt32();
+                    UNUSED(array_length);
                     LOG(std::cout << "Received AMF0 array of length: " << array_length << std::endl;)
                     ++object_nest_level;
                 }
@@ -433,6 +438,7 @@ void RTMPSession::OnMessage(const RTMPHeader& head, const uint8_t* data, int byt
                 }
                 else if (amf0_type == BooleanMarker) {
                     bool value = stream.ReadUInt8() != 0;
+                    UNUSED(value);
                     LOG(std::cout << "Received AMF0 boolean: " << value << std::endl;)
                 }
                 else if (amf0_type == StringMarker) {
@@ -455,10 +461,12 @@ void RTMPSession::OnMessage(const RTMPHeader& head, const uint8_t* data, int byt
                 }
                 else if (amf0_type == ReferenceMarker) {
                     uint32_t reference_id = stream.ReadUInt16();
+                    UNUSED(reference_id);
                     LOG(std::cout << "Received AMF0 reference: " << reference_id << std::endl;)
                 }
                 else if (amf0_type == ECMAArrayMarker) {
                     uint32_t array_length = stream.ReadUInt32();
+                    UNUSED(array_length);
                     LOG(std::cout << "Received AMF0 array of length: " << array_length << std::endl;)
                     ++object_nest_level;
                 }
