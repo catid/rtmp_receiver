@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <iomanip>
+#include <cassert>
 using namespace std;
 
 //#define ENABLE_DEBUG_LOGS
@@ -47,6 +48,7 @@ const char* GetPacketTypeName(int type_id) {
 
 void RollingBuffer::Continue(const uint8_t* &data, int &bytes)
 {
+    assert(BufferIndex == 0 || BufferIndex == 1);
     std::vector<uint8_t>& prev_buffer = Buffers[BufferIndex];
 
     //LOG(cout << "RollingBuffer: Continue: BufferIndex=" << BufferIndex << ", bytes=" << bytes << " prev_buffer.size=" << prev_buffer.size() << endl;)
@@ -65,6 +67,7 @@ void RollingBuffer::StoreRemaining(const uint8_t* data, int bytes)
 {
     BufferIndex ^= 1;
 
+    assert(BufferIndex == 0 || BufferIndex == 1);
     std::vector<uint8_t>& next_buffer = Buffers[BufferIndex];
 
     next_buffer.clear();
@@ -207,6 +210,8 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
         } else if (prev_chunk) {
             head.timestamp += prev_chunk->header.timestamp;
         }
+        assert(head.fmt >= 0 && head.fmt <= 3);
+        assert(head.cs_id > 1);
 
         LOG(std::cout << "Chunk: fmt=" << (int)head.fmt << " cs=" << head.cs_id << " len=" << head.length << " type=" << (int)head.type_id << " stream=" << head.stream_id << std::endl;)
 
@@ -220,6 +225,8 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
                 expected_bytes = ChunkSize;
             }
         }
+
+        assert(expected_bytes > 0 && expected_bytes <= ChunkSize);
         const uint8_t* chunk_data = stream.ReadData(expected_bytes);
         if (stream.HasError()) {
             //LOG(std::cout << "Received chunk partial (waiting for more) on cs=" << head.cs_id << std::endl;)
@@ -229,7 +236,9 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
         }
 
         // Accumulate bytes processed in this chunk
-        ReceivedBytes += stream.RemainingBytes() - stream_remaining;
+        int processed_bytes = stream_remaining - stream.RemainingBytes();
+        assert(processed_bytes >= 0);
+        ReceivedBytes += processed_bytes;
         if (ReceivedBytes > WindowAckSize) {
             Handler->OnNeedAck(ReceivedBytes);
             ReceivedBytes = 0;

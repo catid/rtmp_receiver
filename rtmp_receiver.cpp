@@ -292,6 +292,8 @@ bool RTMPServer::SendChunkAck(uint32_t ack_bytes) {
     msg.WriteUInt32(0/*stream_id*/);
         msg.WriteUInt32(ack_bytes);
 
+    //cout << "Sending chunk ack of " << ack_bytes << " bytes" << endl;
+
     ssize_t bytes = send(ClientSocket, msg.GetData(), msg.GetLength(), MSG_NOSIGNAL);
     return bytes == msg.GetLength();
 }
