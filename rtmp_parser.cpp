@@ -8,9 +8,7 @@
 #include <chrono>
 using namespace std;
 
-#ifdef DEBUG
-# define ENABLE_DEBUG_LOGS
-#endif
+//#define ENABLE_DEBUG_LOGS
 
 #ifdef ENABLE_DEBUG_LOGS
 # define LOG(x) x
@@ -238,6 +236,8 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
                 head.type_id = stream.ReadUInt8();
                 if (head.fmt == 0) {
                     head.stream_id = stream.ReadUInt32(false/*this is the only field...*/);
+                } else if (prev_chunk) {
+                    head.stream_id = prev_chunk->header.stream_id;
                 }
             }
             if (head.fmt == 2 && prev_chunk) {
@@ -259,6 +259,8 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
             head.timestamp += prev_chunk->header.timestamp;
         }
 
+        LOG(std::cout << "Chunk: fmt=" << (int)head.fmt << " cs=" << head.cs_id << " len=" << head.length << " type=" << (int)head.type_id << " stream=" << head.stream_id << std::endl;)
+
         // If message fits in a single chunk, then attempt to read it directly.
         int expected_bytes = head.length;
         if (expected_bytes > ChunkSize) {
@@ -276,8 +278,6 @@ bool RTMPSession::ParseChunk(const void* data, int bytes)
             Buffer->StoreRemaining(stream_start, stream_remaining);
             return false;
         }
-
-        //LOG(std::cout << "Received chunk partial (waiting for more)" << std::endl;)
 
         // Accumulate bytes processed in this chunk
         ReceivedBytes += stream.RemainingBytes() - stream_remaining;
