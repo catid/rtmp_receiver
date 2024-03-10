@@ -1,6 +1,8 @@
 # rtmp_receiver
 
-Simple unidirectional RTMP server receiver.  Implements a subset of the RTMP protocol needed to receive video from a DJI RC Pro controller (you'd specify the server IP address in the DJI controller settings).
+Simple unidirectional RTMP video stream receiver.  Implements a subset of the RTMP protocol needed to receive video from a DJI RC Pro controller (you'd specify the server IP address in the DJI controller settings).
+
+Clean codebase that handles edge-cases well.
 
 ## Testing
 
