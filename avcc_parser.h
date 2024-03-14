@@ -19,10 +19,10 @@ public:
 private:
     int VideoSizeBytes = 0;
 
+    std::vector<uint8_t> Extradata;
+
     void parseExtradata(ByteStream& stream);
     void parseCodedVideo(ByteStream& stream);
-
-    void convertToAnnexB(const uint8_t* data, size_t size);
 };
 
 #endif // AVCC_PARSER_H

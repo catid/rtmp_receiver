@@ -3,6 +3,34 @@
 
 #include <iostream>
 
+
+//------------------------------------------------------------------------------
+// Tools
+
+static const uint8_t kStartCode[] = {0x00, 0x00, 0x00, 0x01};
+static const uint8_t kPrefixCode[] = {0x00, 0x00, 0x03};
+
+static void ConvertToAnnexB(const uint8_t* data, size_t size, std::vector<uint8_t>& out_buffer) {
+    out_buffer.insert(out_buffer.end(), kStartCode, kStartCode + sizeof(kStartCode));
+
+    while (size > 0) {
+        const uint8_t ch = data[0];
+        if (size >= 3 && ch == 0 && data[1] == 0 && data[2] == 0) {
+            out_buffer.insert(out_buffer.end(), kPrefixCode, kPrefixCode + sizeof(kPrefixCode));
+            data += 3;
+            size -= 3;
+        } else {
+            out_buffer.push_back(ch);
+            ++data;
+            --size;
+        }
+    }
+}
+
+
+//------------------------------------------------------------------------------
+// AVCCParser
+
 void AVCCParser::parseAvcc(const uint8_t* data, size_t size) {
     Video.clear();
 
@@ -13,6 +41,10 @@ void AVCCParser::parseAvcc(const uint8_t* data, size_t size) {
     if (type == 0) {
         parseExtradata(stream);
     } else if (type == 1) {
+        if (Extradata.size() > 0) {
+            AppendDataToVector(Video, Extradata.data(), Extradata.size());
+            Extradata.clear();
+        }
         parseCodedVideo(stream);
     } else {
         std::cout << "Unsupported AVCC type " << type << std::endl;
@@ -38,7 +70,7 @@ void AVCCParser::parseExtradata(ByteStream& stream) {
             std::cout << "Truncated while reading SPS" << std::endl;
             return;
         }
-        convertToAnnexB(paramData, paramSize);
+        ConvertToAnnexB(paramData, paramSize, Extradata);
     }
 
     int numPPS = stream.ReadUInt8();
@@ -49,7 +81,7 @@ void AVCCParser::parseExtradata(ByteStream& stream) {
             std::cout << "Truncated while reading PPS" << std::endl;
             return;
         }
-        convertToAnnexB(paramData, paramSize);
+        ConvertToAnnexB(paramData, paramSize, Extradata);
     }
 }
 
@@ -73,26 +105,7 @@ void AVCCParser::parseCodedVideo(ByteStream& stream) {
             std::cout << "Truncated while reading NALU" << std::endl;
             return;
         }
-        convertToAnnexB(nalData, nalSize);
-    }
-}
 
-static const uint8_t kStartCode[] = {0x00, 0x00, 0x00, 0x01};
-static const uint8_t kPrefixCode[] = {0x00, 0x00, 0x03};
-
-void AVCCParser::convertToAnnexB(const uint8_t* data, size_t size) {
-    Video.insert(Video.end(), kStartCode, kStartCode + sizeof(kStartCode));
-
-    while (size > 0) {
-        const uint8_t ch = data[0];
-        if (size >= 3 && ch == 0 && data[1] == 0 && data[2] == 0) {
-            Video.insert(Video.end(), kPrefixCode, kPrefixCode + sizeof(kPrefixCode));
-            data += 3;
-            size -= 3;
-        } else {
-            Video.push_back(ch);
-            ++data;
-            --size;
-        }
+        ConvertToAnnexB(nalData, nalSize, Video);
     }
 }

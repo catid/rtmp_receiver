@@ -25,6 +25,7 @@ using RTMPCallback = std::function<void(
 
 struct VideoStreamState {
     AVCCParser avccParser;
+    bool NewStream = true;
 };
 
 class RTMPReceiver : protected RTMPHandler {

@@ -418,14 +418,12 @@ void RTMPReceiver::OnAvccVideo(
     int bytes)
 {
     // Check if this is a new stream
-    bool new_stream = false;
     auto iter = video_streams.find(stream);
     std::shared_ptr<VideoStreamState> stream_state;
 
     if (iter == video_streams.end()) {
         stream_state = std::make_shared<VideoStreamState>();
         video_streams[stream] = stream_state;
-        new_stream = true;
     } else {
         stream_state = iter->second;
     }
@@ -436,9 +434,10 @@ void RTMPReceiver::OnAvccVideo(
     int annexb_bytes = static_cast<int>( stream_state->avccParser.Video.size() );
 
     if (annexb_bytes == 0) {
-        std::cout << "No annexb data for stream " << stream << std::endl;
         return;
     }
 
-    Callback(new_stream, keyframe, stream, timestamp, annexb_data, annexb_bytes);
+    Callback(stream_state->NewStream, keyframe, stream, timestamp, annexb_data, annexb_bytes);
+
+    stream_state->NewStream = false;
 }
