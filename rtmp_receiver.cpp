@@ -426,7 +426,6 @@ void RTMPReceiver::OnAvccVideo(
         stream_state = std::make_shared<VideoStreamState>();
         video_streams[stream] = stream_state;
         new_stream = true;
-        cout << "New stream " << stream << endl;
     } else {
         stream_state = iter->second;
     }
