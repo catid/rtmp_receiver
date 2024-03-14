@@ -15,10 +15,15 @@
 //------------------------------------------------------------------------------
 // RTMPReceiver
 
-using RTMPCallback = std::function<void(
-    bool new_stream,
-    bool keyframe,
+// Called to set up a new stream
+using RTMPSetupCallback = std::function<void(
     uint32_t stream,
+    RTMPSetupResult& result)>;
+
+// Called to receive video data
+using RTMPVideoCallback = std::function<void(
+    uint32_t stream,
+    bool keyframe,
     uint32_t timestamp,
     const uint8_t* data,
     int bytes)>;
@@ -34,12 +39,17 @@ public:
         Stop();
     }
 
-    bool Start(RTMPCallback callback, int port = 1935, bool enable_logging = false);
+    bool Start(
+        RTMPSetupCallback setup_callback,
+        RTMPVideoCallback video_callback,
+        int port = 1935,
+        bool enable_logging = false);
     void Stop();
 
 private:
     int Port = 1935;
-    RTMPCallback Callback;
+    RTMPSetupCallback SetupCallback;
+    RTMPVideoCallback VideoCallback;
     bool EnableLogging = false;
 
     // Shutdown control socket

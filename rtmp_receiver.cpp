@@ -34,8 +34,14 @@ static void SetNonBlocking(int s) {
 //------------------------------------------------------------------------------
 // RTMPReceiver
 
-bool RTMPReceiver::Start(RTMPCallback callback, int port, bool enable_logging) {
-    Callback = callback;
+bool RTMPReceiver::Start(
+        RTMPSetupCallback setup_callback,
+        RTMPVideoCallback video_callback,
+        int port,
+        bool enable_logging)
+{
+    SetupCallback = setup_callback;
+    VideoCallback = video_callback;
     Port = port;
     EnableLogging = enable_logging;
 
@@ -430,14 +436,19 @@ void RTMPReceiver::OnAvccVideo(
 
     stream_state->avccParser.parseAvcc(data, bytes);
 
-    const uint8_t* annexb_data = stream_state->avccParser.Video.data();
-    int annexb_bytes = static_cast<int>( stream_state->avccParser.Video.size() );
+    if (stream_state->NewStream) {
+        if (!stream_state->avccParser.HasParams) {
+            std::cout << "No parameters for stream " << stream << std::endl;
+            return;
+        }
+        stream_state->NewStream = false;
 
-    if (annexb_bytes == 0) {
-        return;
+        SetupCallback(stream, stream_state->avccParser.SetupResult);
+    } else {
+        if (stream_state->avccParser.VideoSize <= 0) {
+            std::cout << "No video data for stream " << stream << std::endl;
+            return;
+        }
+        VideoCallback(stream, keyframe, timestamp, stream_state->avccParser.VideoData, stream_state->avccParser.VideoSize);
     }
-
-    Callback(stream_state->NewStream, keyframe, stream, timestamp, annexb_data, annexb_bytes);
-
-    stream_state->NewStream = false;
 }
