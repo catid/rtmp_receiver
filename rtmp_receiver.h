@@ -2,6 +2,7 @@
 #define RTMP_RECEIVER_H
 
 #include "rtmp_parser.h"
+#include "avcc_parser.h"
 
 #include <thread>
 #include <vector>
@@ -21,6 +22,10 @@ using RTMPCallback = std::function<void(
     uint32_t timestamp,
     const uint8_t* data,
     int bytes)>;
+
+struct VideoStreamState {
+    AVCCParser avccParser;
+};
 
 class RTMPReceiver : protected RTMPHandler {
 public:
@@ -73,7 +78,7 @@ private:
 
     void OnAvccVideo(bool keyframe, uint32_t stream, uint32_t timestamp, const uint8_t* data, int bytes) override;
 
-    std::unordered_map<uint32_t, bool> seen_streams;
+    std::unordered_map<uint32_t, std::shared_ptr<VideoStreamState>> video_streams;
 };
 
 #endif // RTMP_RECEIVER_H

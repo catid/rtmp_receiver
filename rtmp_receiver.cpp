@@ -120,7 +120,7 @@ void RTMPReceiver::RunServer() {
 
     while (!Terminated) {
         // Reset for each new connection
-        seen_streams.clear();
+        video_streams.clear();
 
         if (WaitForConnection(s)) {
             HandleNextClient(s);
@@ -419,10 +419,27 @@ void RTMPReceiver::OnAvccVideo(
 {
     // Check if this is a new stream
     bool new_stream = false;
-    if (seen_streams.find(stream) == seen_streams.end()) {
-        seen_streams[stream] = true;
+    auto iter = video_streams.find(stream);
+    std::shared_ptr<VideoStreamState> stream_state;
+
+    if (iter == video_streams.end()) {
+        stream_state = std::make_shared<VideoStreamState>();
+        video_streams[stream] = stream_state;
         new_stream = true;
+        cout << "New stream " << stream << endl;
+    } else {
+        stream_state = iter->second;
     }
 
-    Callback(new_stream, keyframe, stream, timestamp, data, bytes);
+    stream_state->avccParser.parseAvcc(data, bytes);
+
+    const uint8_t* annexb_data = stream_state->avccParser.Video.data();
+    int annexb_bytes = static_cast<int>( stream_state->avccParser.Video.size() );
+
+    if (annexb_bytes == 0) {
+        std::cout << "No annexb data for stream " << stream << std::endl;
+        return;
+    }
+
+    Callback(new_stream, keyframe, stream, timestamp, annexb_data, annexb_bytes);
 }
