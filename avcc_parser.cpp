@@ -42,7 +42,7 @@ void AVCCParser::parseAvcc(const uint8_t* data, size_t size) {
         parseExtradata(stream);
     } else if (type == 1) {
         if (Extradata.size() > 0) {
-            AppendDataToVector(Video, Extradata.data(), Extradata.size());
+            AppendDataToVector(Video, Extradata.data(), static_cast<int>( Extradata.size() ));
             Extradata.clear();
         }
         parseCodedVideo(stream);
@@ -56,10 +56,15 @@ void AVCCParser::parseAvcc(const uint8_t* data, size_t size) {
 
 void AVCCParser::parseExtradata(ByteStream& stream) {
     int skip = stream.ReadUInt24();
+    UNUSED(skip);
     int configVersion = stream.ReadUInt8();
+    UNUSED(configVersion);
     int profile = stream.ReadUInt8();
+    UNUSED(profile);
     int profileCompatibility = stream.ReadUInt8();
+    UNUSED(profileCompatibility);
     int level = stream.ReadUInt8();
+    UNUSED(level);
     VideoSizeBytes = (stream.ReadUInt8() & 0x03) + 1;
 
     int numSPS = stream.ReadUInt8() & 0x1F;
@@ -87,6 +92,7 @@ void AVCCParser::parseExtradata(ByteStream& stream) {
 
 void AVCCParser::parseCodedVideo(ByteStream& stream) {
     int skip = stream.ReadUInt24();
+    UNUSED(skip);
 
     while (!stream.IsEndOfStream()) {
         uint32_t nalSize = 0;

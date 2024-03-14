@@ -10,6 +10,9 @@
 //------------------------------------------------------------------------------
 // Tools
 
+// Disable warnings for unused variables
+#define UNUSED(x) (void)x
+
 void FillRandomBuffer(uint8_t* buffer, int bytes, uint32_t seed);
 
 void WriteUInt32(uint8_t* buffer, uint32_t value);

@@ -17,8 +17,6 @@ using namespace std;
 # define LOG(x)
 #endif
 
-#define UNUSED(x) (void)x
-
 
 //------------------------------------------------------------------------------
 // Tools
