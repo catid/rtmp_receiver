@@ -93,9 +93,6 @@ void rtmpVideoCallback(
 
     ByteStream avcc_stream(data, bytes);
 
-    int skip = avcc_stream.ReadUInt24();
-    UNUSED(skip);
-
     std::vector<uint8_t> annex_b_buffer;
 
     while (!avcc_stream.IsEndOfStream()) {
@@ -109,6 +106,8 @@ void rtmpVideoCallback(
         } else {
             nalSize = avcc_stream.ReadUInt32();
         }
+
+        std::cout << "NALU size: " << nalSize << std::endl;
 
         const uint8_t* nalData = avcc_stream.ReadData(nalSize);
         if (avcc_stream.HasError()) {
